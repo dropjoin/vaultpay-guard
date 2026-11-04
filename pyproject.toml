@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vaultpay-guard"
+version = "0.1.0"
+description = "A policy-guarded AI payment agent on the PayPal sandbox: proposer, independent checker, deterministic policy engine, auditable ledger."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "M Aziz Yahya" }]
+# Runtime uses the Python standard library only — no pip installs needed.
+dependencies = []
+
+[tool.setuptools]
+packages = ["src"]

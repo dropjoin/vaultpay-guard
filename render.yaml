@@ -1,0 +1,46 @@
+# VaultPay Guard — Render Blueprint (free web service).
+#
+# How to use: in the Render dashboard choose "New > Blueprint" and
+# point it at this repository, or create the web service manually
+# with the same settings (see DEPLOY.md). Render injects $PORT; the
+# app binds 0.0.0.0:$PORT itself.
+#
+# Secrets: PAYPAL_CLIENT_SECRET and LLM_API_KEY are declared with
+# `sync: false` ON PURPOSE — Render will prompt for their values at
+# deploy time and they are never stored in this repository. Leave the
+# PayPal values empty to run in clearly-labeled SIMULATED mode.
+services:
+  - type: web
+    name: vaultpay-guard
+    env: python
+    plan: free
+    buildCommand: "echo 'No build step: Python standard library only'"
+    startCommand: "python3 app.py"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      # --- PayPal sandbox (Orders API v2) ---------------------------
+      # From a sandbox app at
+      # https://developer.paypal.com/dashboard/applications/sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_ENV
+        value: sandbox
+      # --- AI provider (optional; mock backend when LLM_API_KEY empty)
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      # --- State files ----------------------------------------------
+      # NOTE: the free plan's filesystem is ephemeral — the ledger and
+      # policy reset on redeploy/restart. Fine for a hackathon demo;
+      # see DEPLOY.md for the persistent-disk option.
+      - key: POLICY_PATH
+        value: config/policy.example.json
+      - key: LEDGER_PATH
+        value: data/audit-ledger.jsonl
