@@ -112,6 +112,116 @@ def deciding_stage(record: dict) -> tuple[str, str]:
             "; ".join(reasons) or "Rejected by the independent checker.")
 
 
+def pipeline_trace(record: dict) -> list[dict]:
+    """The pipeline, step by step, for the decision card's trace.
+
+    Pure presentation: each step's status and detail is derived from
+    fields the flow already recorded (proposal, guardrail scan, policy
+    verdict, checker outcome, execution) — nothing is re-evaluated and
+    no verdict logic lives here. Statuses: ``pass``, ``reject``,
+    ``flag`` (noted, below the blocking threshold), ``pending``,
+    ``skip`` (never reached / never consulted), ``error``.
+    """
+    steps: list[dict] = []
+    prop = record.get("proposal") or {}
+    guardrail = record.get("guardrail") or {}
+    policy_v = record.get("policy_verdict") or {}
+    checker = record.get("checker") or {}
+    execution = record.get("execution")
+    verdict = record.get("final_verdict")
+
+    if prop:
+        detail = (f"Drafted {prop.get('amount', '')} to "
+                  f"{prop.get('payee', '')}").strip()
+        if prop.get("reference"):
+            detail += f" · ref {prop['reference']}"
+        if prop.get("rationale"):
+            detail += f" — {prop['rationale']}"
+        steps.append({"name": "AI proposer", "status": "pass",
+                      "detail": detail})
+
+    if guardrail:
+        flags = guardrail.get("flags") or []
+        names = ", ".join(sorted({str(f.get("pattern", "?"))
+                                  for f in flags}))
+        if guardrail.get("blocked"):
+            steps.append({
+                "name": "Injection guardrail", "status": "reject",
+                "detail": "Blocked the request — high-severity "
+                          f"injection pattern(s): {names}."})
+        elif flags:
+            steps.append({
+                "name": "Injection guardrail", "status": "flag",
+                "detail": "Flagged, below the blocking threshold: "
+                          f"{names}."})
+        else:
+            steps.append({
+                "name": "Injection guardrail", "status": "pass",
+                "detail": guardrail.get("summary")
+                or "No injection patterns detected."})
+
+    floor_rejected = bool(guardrail.get("blocked")) or \
+        policy_v.get("verdict") == "REJECT"
+    if policy_v:
+        pv = policy_v.get("verdict", "")
+        reasons = "; ".join(policy_v.get("reasons") or [])
+        steps.append({"name": "Policy engine",
+                      "status": "pass" if pv == "PASS" else "reject",
+                      "detail": reasons or f"Verdict {pv}."})
+
+    if checker:
+        llm_verdict = checker.get("llm_verdict")
+        source = checker.get("source", "")
+        reasons = "; ".join(checker.get("reasons") or [])
+        if llm_verdict in ("PASS", "REJECT"):
+            steps.append({
+                "name": "Independent checker",
+                "status": "pass" if llm_verdict == "PASS" else "reject",
+                "detail": (f"Checker model ({source}): {reasons}"
+                           if reasons else
+                           f"Checker model verdict: {llm_verdict}.")})
+        elif floor_rejected:
+            steps.append({
+                "name": "Independent checker", "status": "skip",
+                "detail": "Not asked to reconsider — the deterministic "
+                          "floor already rejected this payment, and a "
+                          "model may only tighten a decision, never "
+                          "loosen it."})
+        else:
+            steps.append({
+                "name": "Independent checker", "status": "pass",
+                "detail": "Deterministic review only — no checker "
+                          "model verdict recorded"
+                          + (f": {reasons}." if reasons else ".")})
+
+    if execution:
+        status = execution.get("status")
+        mode = execution.get("mode", "")
+        if status == "COMPLETED":
+            steps.append({
+                "name": "PayPal execution", "status": "pass",
+                "detail": f"Order {execution.get('order_id')} · capture "
+                          f"{execution.get('capture_id')} · "
+                          f"mode {mode}."})
+        elif status == "ORDER_CREATED":
+            steps.append({
+                "name": "PayPal execution", "status": "pending",
+                "detail": f"Order {execution.get('order_id')} created "
+                          f"({mode}) — awaiting payer approval, "
+                          "then capture."})
+        else:
+            steps.append({
+                "name": "PayPal execution", "status": "error",
+                "detail": "Execution failed: "
+                          + str(execution.get("error") or status)})
+    elif verdict:
+        steps.append({
+            "name": "PayPal execution", "status": "skip",
+            "detail": "Not executed — the payment was stopped by an "
+                      "earlier layer."})
+    return steps
+
+
 def effective_records(entries: list[dict]) -> list[dict]:
     """Reconcile capture records into their decision records.
 
@@ -285,6 +395,13 @@ class VaultPayWebApp:
             "daily_headroom": format_money(
                 max(policy.daily_cap_minor - spent, 0), cur),
             "balance": format_money(balance, cur),
+            # Raw minor units alongside the formatted strings, for
+            # presentation math (progress bars, percentages). The
+            # formatted fields above remain the canonical display form.
+            "per_tx_cap_minor": policy.per_tx_cap_minor,
+            "daily_cap_minor": policy.daily_cap_minor,
+            "spent_today_minor": spent,
+            "balance_minor": balance,
             "allowed_currencies": list(policy.allowed_currencies),
             "payees": [{"id": p.id, "name": p.name, "email": p.email}
                        for p in policy.payees],
@@ -385,6 +502,30 @@ def badge_html(status: dict) -> str:
             "real funds move.</div>")
 
 
+_TRACE_LABELS = {"pass": "PASS", "reject": "REJECT", "flag": "FLAGGED",
+                 "pending": "PENDING", "skip": "SKIPPED", "error": "ERROR"}
+
+
+def trace_html(record: dict) -> str:
+    """Render :func:`pipeline_trace` as a styled step-by-step list."""
+    steps = pipeline_trace(record)
+    if not steps:
+        return ""
+    items = []
+    for i, step in enumerate(steps, 1):
+        items.append(
+            f'<li class="trace-step trace-{_esc(step["status"])}">'
+            f'<span class="trace-num">{i}</span>'
+            f'<span class="trace-name">{_esc(step["name"])}</span>'
+            f'<span class="trace-status trace-status-'
+            f'{_esc(step["status"])}">{_TRACE_LABELS[step["status"]]}'
+            "</span>"
+            f'<span class="trace-detail">{_esc(step["detail"])}</span>'
+            "</li>")
+    return ('<h3>Pipeline trace</h3><ol class="trace">'
+            + "".join(items) + "</ol>")
+
+
 def render_card_html(record: dict) -> str:
     """The decision card as HTML — same facts as the CLI card."""
     p = record.get("proposal") or {}
@@ -411,6 +552,7 @@ def render_card_html(record: dict) -> str:
         f"<dt>Checked by</dt><dd>{_esc(checker.get('source'))}</dd>",
         f"<dt>Guardrail</dt><dd>{_esc(guardrail.get('summary', ''))}</dd>",
         "</dl>",
+        trace_html(record),
         "<h3>Reasons</h3><ul>",
     ]
     for reason in checker.get("reasons") or []:
@@ -470,7 +612,8 @@ main { max-width: 1180px; margin: 0 auto; padding: 18px 22px 40px; }
 .badge-live { background: #fee2e2; border: 2px solid #dc2626;
               color: #7f1d1d; }
 .panel { background: #fff; border: 1px solid #dbe2f0; border-radius: 10px;
-         padding: 18px; margin-bottom: 18px; }
+         padding: 18px; margin-bottom: 18px;
+         box-shadow: 0 1px 4px rgba(11, 31, 74, .07); }
 .panel h2 { margin-top: 0; font-size: 17px; }
 fieldset { border: 1px solid #dbe2f0; border-radius: 8px; margin: 12px 0; }
 legend { font-weight: 600; font-size: 14px; padding: 0 6px; }
@@ -490,7 +633,8 @@ button.secondary { background: #e8edf7; color: #17233b; }
         margin: 4px 6px 0 0; }
 .chip:hover { background: #dde7fa; }
 .card { border-radius: 10px; padding: 16px 18px; margin-top: 16px;
-        border: 1px solid #dbe2f0; background: #fff; }
+        border: 1px solid #dbe2f0; background: #fff;
+        box-shadow: 0 1px 4px rgba(11, 31, 74, .07); }
 .card-pass { border-left: 6px solid #16a34a; }
 .card-reject { border-left: 6px solid #dc2626; }
 .card h2 { margin: 0 0 8px; font-size: 17px; }
@@ -525,6 +669,72 @@ table.plain th { color: #47597d; width: 220px; }
 .muted { color: #64748b; font-size: 13px; }
 #ledger-grid { height: 560px; width: 100%; }
 .hidden { display: none; }
+.hero { background: linear-gradient(135deg, #0b1f4a, #14408f);
+         color: #fff; border-radius: 12px; padding: 22px 24px;
+         margin-bottom: 18px; box-shadow: 0 2px 10px rgba(11,31,74,.25); }
+.hero h2 { margin: 0 0 6px; font-size: 22px; }
+.hero-sub { margin: 0 0 18px; opacity: .85; font-size: 14px;
+           max-width: 760px; }
+.steps { display: flex; align-items: stretch; gap: 8px; }
+.step { flex: 1 1 0; background: rgba(255,255,255,.08);
+        border: 1px solid rgba(255,255,255,.25); border-radius: 10px;
+        padding: 12px 14px; }
+.step-num { display: inline-block; background: #fff; color: #0b1f4a;
+            font-weight: 700; font-size: 12px; border-radius: 50%;
+            width: 22px; height: 22px; line-height: 22px;
+            text-align: center; margin-bottom: 8px; }
+.step-name { font-weight: 700; font-size: 14.5px; margin-bottom: 4px; }
+.step p { margin: 0; font-size: 12.5px; opacity: .82; line-height: 1.45; }
+.step-arrow { align-self: center; font-size: 18px; opacity: .7;
+              flex: 0 0 auto; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr);
+         gap: 14px; margin-bottom: 18px; }
+.stat { background: #fff; border: 1px solid #dbe2f0; border-radius: 10px;
+        padding: 14px 16px; box-shadow: 0 1px 4px rgba(11,31,74,.07); }
+.stat-label { font-size: 12px; font-weight: 700; letter-spacing: .04em;
+              text-transform: uppercase; color: #47597d; }
+.stat-value { font-size: 24px; font-weight: 700; margin: 4px 0 6px; }
+.stat-sub { margin: 0; font-size: 12.5px; color: #64748b;
+            line-height: 1.45; }
+.progress { background: #e6ecf7; border-radius: 6px; height: 9px;
+            overflow: hidden; margin: 8px 0; }
+.progress-bar { height: 100%; border-radius: 6px; }
+.bar-ok { background: #16a34a; }
+.bar-warn { background: #d97706; }
+.bar-danger { background: #dc2626; }
+.card h3 { font-size: 14.5px; margin: 14px 0 6px; }
+.trace { list-style: none; margin: 6px 0 2px; padding: 0; }
+.trace-step { display: flex; flex-wrap: wrap; gap: 6px 10px;
+              align-items: baseline; padding: 8px 10px;
+              border-left: 4px solid #cbd5e1; border-radius: 0 6px 6px 0;
+              background: #f8fafc; margin-bottom: 6px; font-size: 13.5px; }
+.trace-pass { border-left-color: #16a34a; }
+.trace-reject, .trace-error { border-left-color: #dc2626;
+                              background: #fef6f6; }
+.trace-flag, .trace-pending { border-left-color: #d97706;
+                              background: #fffbeb; }
+.trace-num { background: #0b1f4a; color: #fff; border-radius: 50%;
+             width: 19px; height: 19px; line-height: 19px;
+             text-align: center; font-size: 11px; font-weight: 700;
+             flex: 0 0 auto; }
+.trace-name { font-weight: 700; }
+.trace-status { font-size: 11px; font-weight: 700; padding: 1px 8px;
+                border-radius: 12px; background: #e2e8f0; color: #334155; }
+.trace-status-pass { background: #dcfce7; color: #166534; }
+.trace-status-reject, .trace-status-error { background: #fee2e2;
+                                            color: #991b1b; }
+.trace-status-flag, .trace-status-pending { background: #fef3c7;
+                                            color: #92400e; }
+.trace-detail { flex: 1 1 100%; color: #3c4c68; }
+footer { max-width: 1180px; margin: 0 auto; padding: 6px 22px 28px;
+         display: flex; flex-wrap: wrap; gap: 6px 18px;
+         font-size: 13px; color: #64748b; }
+footer a { color: #0b5fff; }
+@media (max-width: 900px) {
+  .stats { grid-template-columns: 1fr 1fr; }
+  .steps { flex-direction: column; }
+  .step-arrow { transform: rotate(90deg); }
+}
 """
 
 _PAGE = """<!DOCTYPE html>
@@ -550,6 +760,16 @@ __HEAD_EXTRA__
 __BADGE__
 __BODY__
 </main>
+<footer>
+  <span><strong>VaultPay Guard</strong> — built for the PayPal AI
+  Hackathon.</span>
+  <a href="https://github.com/dropjoin/vaultpay-guard" target="_blank"
+     rel="noopener">Source on GitHub</a>
+  <span>Demo deployment: the badge at the top of this page states
+  whether this instance talks to the PayPal sandbox API, the live API,
+  or a local simulation. Sandbox runs move test money only; no real
+  funds move.</span>
+</footer>
 </body>
 </html>
 """
@@ -564,6 +784,91 @@ def _page(app: VaultPayWebApp, title: str, body: str,
            .replace("__BADGE__", badge_html(status))
            .replace("__BODY__", body))
     return doc.encode("utf-8")
+
+
+_PIPELINE_STEPS = [
+    ("AI Proposer",
+     "Reads the request and drafts a structured payment. Its output "
+     "is treated as data, never as instructions."),
+    ("Injection Guardrail",
+     "Deterministic scan of all untrusted text for prompt-injection "
+     "patterns, before any model weighs in."),
+    ("Policy Engine",
+     "Plain code, not a model: caps, payee allowlist, balance and the "
+     "frozen switch. The floor no other layer can loosen."),
+    ("Independent Checker",
+     "A second, independent model reviews the draft. It can only "
+     "tighten the policy floor's verdict, never loosen it."),
+    ("PayPal",
+     "Two-phase Orders API: create the order, the payer approves, "
+     "then capture. Every step lands in the audit ledger."),
+]
+
+
+def _hero_html() -> str:
+    """The pipeline as visual step cards, under the page header."""
+    cards = []
+    for i, (name, blurb) in enumerate(_PIPELINE_STEPS, 1):
+        cards.append(
+            f'<div class="step"><div class="step-num">{i}</div>'
+            f'<div class="step-name">{_esc(name)}</div>'
+            f'<p>{_esc(blurb)}</p></div>')
+        if i < len(_PIPELINE_STEPS):
+            cards.append('<div class="step-arrow" aria-hidden="true">'
+                         "&rarr;</div>")
+    return ('<section class="hero">'
+            "<h2>Five gates stand between a request and your money</h2>"
+            '<p class="hero-sub">An AI may draft a payment and a second '
+            "AI may review it, but the decision floor is deterministic "
+            "code — and a rejection at any gate stops the payment and "
+            "is written to the audit ledger.</p>"
+            '<div class="steps">' + "".join(cards) + "</div></section>")
+
+
+def _daily_bar(view: dict) -> tuple[float, str]:
+    """(percent of daily cap spent, css class) for a progress bar."""
+    cap = view.get("daily_cap_minor") or 0
+    spent = view.get("spent_today_minor") or 0
+    pct = min(100.0, 100.0 * spent / cap) if cap > 0 else 0.0
+    cls = "bar-ok" if pct < 70 else ("bar-warn" if pct < 90
+                                     else "bar-danger")
+    return pct, cls
+
+
+def _stats_html(app: VaultPayWebApp) -> str:
+    """Live stat cards, fed from the same view as the Policy page."""
+    view = app.policy_view()
+    pct, bar_cls = _daily_bar(view)
+    names = ", ".join(p["name"] for p in view["payees"])
+    frozen = (' <span class="pill pill-reject">FROZEN</span>'
+              if view["frozen"] else "")
+    return (
+        '<section class="stats">'
+        '<div class="stat"><div class="stat-label">Per-transaction '
+        f'cap</div><div class="stat-value">{_esc(view["per_tx_cap"])}'
+        '</div><p class="stat-sub">Hard ceiling for any single '
+        "payment, enforced by the policy engine.</p></div>"
+        '<div class="stat"><div class="stat-label">Daily cap</div>'
+        f'<div class="stat-value">{_esc(view["daily_cap"])}</div>'
+        f'<div class="progress"><div class="progress-bar {bar_cls}" '
+        f'style="width:{pct:.1f}%"></div></div>'
+        f'<p class="stat-sub">{_esc(view["spent_today"])} spent today '
+        f'({pct:.0f}%) · {_esc(view["daily_headroom"])} headroom '
+        "left.</p></div>"
+        '<div class="stat"><div class="stat-label">Account balance'
+        f'</div><div class="stat-value">{_esc(view["balance"])}{frozen}'
+        '</div><p class="stat-sub">Balance from the active policy '
+        "config — the ceiling every payment is checked against.</p>"
+        "</div>"
+        '<div class="stat"><div class="stat-label">Allowlisted '
+        f'payees</div><div class="stat-value">{len(view["payees"])}'
+        f'</div><p class="stat-sub">{_esc(names)}</p></div>'
+        "</section>")
+
+
+def _index_body(app: VaultPayWebApp) -> str:
+    """Home page: hero pipeline, live stats, then the payment form."""
+    return _hero_html() + _stats_html(app) + _INDEX_BODY
 
 
 _INDEX_BODY = """
@@ -886,6 +1191,7 @@ def _ledger_body(app: VaultPayWebApp) -> str:
 
 def _policy_body(app: VaultPayWebApp) -> str:
     view = app.policy_view()
+    pct, bar_cls = _daily_bar(view)
     payee_rows = "".join(
         f"<tr><td>{_esc(p['id'])}</td><td>{_esc(p['name'])}</td>"
         f"<td>{_esc(p['email'])}</td></tr>" for p in view["payees"])
@@ -905,7 +1211,12 @@ def _policy_body(app: VaultPayWebApp) -> str:
         f"<tr><th>Daily headroom left</th><td>{_esc(view['daily_headroom'])}</td></tr>"
         f"<tr><th>Account balance (seed)</th><td>{_esc(view['balance'])}</td></tr>"
         f"<tr><th>Allowed currencies</th><td>{_esc(', '.join(view['allowed_currencies']))}</td></tr>"
-        "</table></section>"
+        "</table>"
+        f'<div class="progress"><div class="progress-bar {bar_cls}" '
+        f'style="width:{pct:.1f}%"></div></div>'
+        f'<p class="muted">Daily budget used: {pct:.0f}% — '
+        f"{_esc(view['spent_today'])} of {_esc(view['daily_cap'])}."
+        "</p></section>"
         '<section class="panel"><h2>Payee allowlist</h2>'
         '<table class="plain"><tr><th>ID</th><th>Name</th><th>Email</th></tr>'
         + payee_rows + "</table>"
@@ -960,7 +1271,7 @@ def make_handler(app: VaultPayWebApp):
             try:
                 if path == "/":
                     self._send_html(200, _page(app, "New Payment",
-                                               _INDEX_BODY))
+                                               _index_body(app)))
                 elif path == "/ledger":
                     self._send_html(200, _page(app, "Audit Ledger",
                                                _ledger_body(app),
