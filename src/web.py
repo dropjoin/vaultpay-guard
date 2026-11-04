@@ -485,7 +485,8 @@ def badge_html(status: dict) -> str:
     """
     if status["simulated"]:
         return ('<div class="badge badge-sim" role="alert">'
-                "&#9888; <strong>SANDBOX / SIMULATED MODE</strong> — no "
+                '<span aria-hidden="true">&#9888;</span> '
+                "<strong>SANDBOX / SIMULATED MODE</strong> — no "
                 "PayPal credentials are configured, so orders are "
                 "simulated locally. <strong>No money moves</strong>, "
                 "not even sandbox money. Add sandbox credentials "
@@ -514,7 +515,8 @@ def trace_html(record: dict) -> str:
     items = []
     for i, step in enumerate(steps, 1):
         items.append(
-            f'<li class="trace-step trace-{_esc(step["status"])}">'
+            f'<li class="trace-step trace-{_esc(step["status"])}" '
+            f'style="--i:{i}">'
             f'<span class="trace-num">{i}</span>'
             f'<span class="trace-name">{_esc(step["name"])}</span>'
             f'<span class="trace-status trace-status-'
@@ -557,6 +559,9 @@ def render_card_html(record: dict) -> str:
     ]
     for reason in checker.get("reasons") or []:
         parts.append(f"<li>{_esc(reason)}</li>")
+    if not (checker.get("reasons") or []):
+        parts.append('<li class="muted">No reasons recorded — the '
+                     "pipeline trace above carries the detail.</li>")
     parts.append("</ul>")
     ex = record.get("execution")
     if ex:
@@ -579,7 +584,7 @@ def render_card_html(record: dict) -> str:
                 "created — <strong>awaiting payer approval</strong>"
                 f"{approve} &middot; "
                 f'<button type="button" class="mini-btn" '
-                f'onclick="completeCapture(\'{oid}\')">Complete '
+                f'onclick="completeCapture(\'{oid}\', this)">Complete '
                 "capture</button></p>")
         else:
             parts.append(
@@ -591,286 +596,402 @@ def render_card_html(record: dict) -> str:
 
 _CSS = """
 :root { color-scheme: light;
-        --navy: #001C64; --blue: #003087; --bright: #0070BA;
+        --ink: #0A1F44; --blue: #003087; --bright: #0070BA;
         --bright-hover: #005EA6; --sky: #009CDE;
-        --bg: #F5F7FA; --border: #E1E8F0;
-        --ink: #0B1F4B; --body: #33475B; --muted: #5B6B82;
-        --green: #1E9E50; --green-dark: #137333; --green-bg: #E2F2E7;
-        --red: #D93025; --red-dark: #B3261E; --red-bg: #FBE9E7;
-        --shadow-sm: 0 1px 2px rgba(0, 28, 100, .05),
-                     0 2px 8px rgba(0, 28, 100, .05);
-        --shadow-md: 0 2px 4px rgba(0, 28, 100, .06),
-                     0 14px 34px rgba(0, 28, 100, .10); }
+        --bg: #E9E9EB; --panel: #FFFFFF; --hairline: #DCDDE2;
+        --field-border: #C6CBD4;
+        --body: #363D49; --muted: #6D7280;
+        --green: #1E8A49; --green-dark: #146C39; --green-bg: #EAF6EE;
+        --green-border: #C9E7D2;
+        --red: #D93025; --red-dark: #B3261E; --red-bg: #FBEDEB;
+        --red-border: #F0CFCB;
+        --amber-bg: #FFF6DB; --amber-dark: #92400E;
+        --shadow-sm: 0 1px 2px rgba(10, 31, 68, .05); }
 * { box-sizing: border-box; }
-::selection { background: rgba(0, 156, 222, .28); }
-body { font-family: system-ui, -apple-system, "Segoe UI", Roboto,
-       "Helvetica Neue", sans-serif;
+::selection { background: rgba(0, 112, 186, .18); }
+body { font-family: "Inter", system-ui, -apple-system, "Segoe UI",
+       Roboto, "Helvetica Neue", sans-serif;
        margin: 0; background: var(--bg); color: var(--body);
        -webkit-font-smoothing: antialiased; }
 a { color: var(--bright); }
 a:hover { color: var(--bright-hover); }
-header { background: linear-gradient(90deg, var(--navy), var(--blue));
-         color: #fff; padding: 16px 24px;
-         display: flex; flex-wrap: wrap; gap: 8px 16px;
-         align-items: center;
-         box-shadow: 0 2px 14px rgba(0, 28, 100, .28); }
-header h1 { font-size: 21px; margin: 0; font-weight: 700;
-            letter-spacing: -.01em; }
-header .tagline { color: #BCD6F5; font-size: 13.5px; }
-nav { margin-left: auto; display: flex; gap: 4px; }
-nav a { color: #D6E7FA; margin-left: 0; padding: 7px 14px;
-        border-radius: 999px; text-decoration: none;
-        font-size: 14px; font-weight: 500;
-        transition: background .18s ease, color .18s ease; }
-nav a:hover { background: rgba(255, 255, 255, .14); color: #fff;
-              text-decoration: none; }
-main { max-width: 1180px; margin: 0 auto; padding: 26px 22px 48px; }
-.badge { border-radius: 12px; padding: 12px 16px; font-size: 14px;
-         margin-bottom: 20px; line-height: 1.5; }
-.badge-sim { background: #FFF7DE; border: 1.5px solid #E0A800;
-             color: #5F4700; }
-.badge-sandbox { background: #E8F3FB; border: 1px solid var(--sky);
-                 color: var(--blue); }
-.badge-live { background: #FDECEA; border: 1.5px solid var(--red);
-              color: #7F1D1D; }
-.panel { background: #fff; border: 1px solid var(--border);
-         border-radius: 16px; padding: 24px 26px; margin-bottom: 20px;
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+       font-size: .92em; }
+header { background: #fff; border-bottom: 1px solid var(--hairline); }
+.header-inner { max-width: 1240px; margin: 0 auto; padding: 13px 22px;
+       display: flex; flex-wrap: wrap; gap: 8px 20px;
+       align-items: center; }
+.brand { display: inline-flex; align-items: center; gap: 11px;
+         text-decoration: none; }
+.logo-mark { width: 36px; height: 36px; flex: 0 0 auto; }
+.wordmark { font-size: 28px; font-weight: 800; color: var(--ink);
+            letter-spacing: -.02em; }
+nav { margin-left: auto; display: flex; gap: 26px; }
+nav a { color: var(--muted); text-decoration: none; font-size: 15px;
+        font-weight: 500; padding: 4px 0;
+        transition: color .16s ease; }
+nav a:hover { color: var(--ink); text-decoration: none; }
+nav a[aria-current="page"] { color: var(--ink); font-weight: 700; }
+main { max-width: 1240px; margin: 0 auto; padding: 28px 22px 44px; }
+.badge { font-size: 13.5px; line-height: 1.5; margin-bottom: 22px; }
+.badge-sandbox { display: inline-block; background: #E2EEFA;
+        color: var(--blue); border: 1px solid #C4DCF5;
+        border-radius: 999px; padding: 7px 15px; font-size: 12.5px; }
+.badge-sandbox strong { text-transform: uppercase;
+        letter-spacing: .04em; }
+.badge-sim { background: #FFF7DE; border: 1px solid #E0A800;
+        color: #5F4700; border-radius: 10px; padding: 12px 16px; }
+.badge-live { background: var(--red-bg); border: 1px solid var(--red);
+        color: #7F1D1D; border-radius: 10px; padding: 12px 16px; }
+.panel { background: var(--panel); border: 1px solid var(--hairline);
+         border-radius: 12px; padding: 24px 28px; margin-bottom: 18px;
          box-shadow: var(--shadow-sm); }
-.panel h2 { margin-top: 0; font-size: 18px; color: var(--ink);
-            font-weight: 700; letter-spacing: -.01em; }
-fieldset { border: 1px solid var(--border); border-radius: 12px;
-           margin: 14px 0; padding: 6px 16px 14px; }
-legend { font-weight: 600; font-size: 14px; padding: 0 6px;
-         color: var(--ink); }
+.panel h2 { margin: 0 0 6px; font-size: 19px; color: var(--ink);
+            font-weight: 750; letter-spacing: -.015em; }
+.hero-head { margin: 4px 0 24px; }
+.hero-title { margin: 0 0 12px; font-weight: 800; color: var(--ink);
+        font-size: clamp(28px, 3.05vw, 44px);
+        letter-spacing: -.022em; line-height: 1.07; }
+.hero-sub { margin: 0; font-size: 16.5px; line-height: 1.55;
+        color: #565D69; max-width: 880px; }
+.diagram { padding: 24px 26px; position: relative; }
+.diagram-grid { display: flex; align-items: stretch; gap: 18px; }
+.sample-card { flex: 0 0 262px; border: 1px solid var(--hairline);
+        border-radius: 10px; padding: 16px 18px; background: #fff;
+        box-shadow: var(--shadow-sm); display: flex;
+        flex-direction: column; gap: 10px; }
+.sample-tag { align-self: flex-start; background: #EFF0F2;
+        color: #565D69; font-size: 11px; font-weight: 700;
+        letter-spacing: .05em; padding: 4px 9px; border-radius: 6px; }
+.sample-main { display: flex; gap: 12px; align-items: flex-start; }
+.sample-icon { width: 34px; height: 34px; flex: 0 0 auto;
+               margin-top: 2px; }
+.sample-text { margin: 0; font-size: 15px; font-weight: 600;
+        color: var(--ink); line-height: 1.45; }
+.sample-dest { margin: auto 0 0; font-size: 12.5px;
+               color: var(--muted); }
+.gates { list-style: none; margin: 0; padding: 8px 0;
+         flex: 1 1 auto; display: flex; align-items: flex-start; }
+.gate { flex: 1 1 0; display: flex; flex-direction: column;
+        align-items: center; text-align: center; gap: 10px; }
+.gate-node { width: 74px; height: 74px; border-radius: 50%;
+        border: 1.5px solid #C9CDD6; background: #fff;
+        display: flex; align-items: center; justify-content: center;
+        transition: transform .22s cubic-bezier(.34, 1.3, .64, 1),
+                    border-color .18s ease; }
+.gate:hover .gate-node { transform: translateY(-3px);
+        border-color: var(--bright); }
+.gate-node svg { width: 36px; height: 36px; }
+.gate-label { font-size: 13.5px; font-weight: 650; color: var(--ink);
+        line-height: 1.3; }
+.gate-arrow { flex: 0 0 26px; margin-top: 26px; color: #9AA1AD;
+        display: flex; justify-content: center; }
+.gate-arrow svg { width: 22px; height: 12px; }
+.sample-trace { flex: 0 0 276px; background: var(--green-bg);
+        border: 1px solid var(--green-border); border-radius: 10px;
+        padding: 16px 18px; }
+.sample-trace h3 { margin: 12px 0 8px; font-size: 14.5px;
+        color: var(--ink); }
+.sample-trace ul { list-style: none; margin: 0; padding: 0;
+        font-size: 12.8px; line-height: 1.5; color: var(--body); }
+.sample-trace li { padding: 3px 0; }
+.sample-trace li::before { content: "–  ";
+        color: var(--green-dark); font-weight: 700; }
+.pill-solid-pass { display: inline-flex; align-items: center; gap: 6px;
+        background: var(--green); color: #fff; font-weight: 700;
+        font-size: 12.5px; padding: 5px 13px; border-radius: 999px;
+        letter-spacing: .02em; }
+.pill-solid-pass svg { width: 13px; height: 13px; }
+.stats-strip { background: #fff; border: 1px solid var(--hairline);
+        border-radius: 12px; box-shadow: var(--shadow-sm);
+        display: grid; grid-template-columns: repeat(4, 1fr);
+        margin-bottom: 18px; overflow: hidden; }
+.stat-cell { padding: 20px 24px 18px; }
+.stat-cell + .stat-cell { border-left: 1px solid var(--hairline); }
+.stat-label { font-size: 13.5px; font-weight: 500;
+              color: var(--muted); margin-bottom: 5px; }
+.stat-value { font-size: 27px; font-weight: 750; color: var(--ink);
+        letter-spacing: -.015em; line-height: 1.15; }
+.stat-sub { margin: 7px 0 0; font-size: 12.3px; color: var(--muted);
+        line-height: 1.5; }
+.progress { background: #E4E6EA; border-radius: 999px; height: 5px;
+        overflow: hidden; margin-top: 11px; }
+.progress-bar { height: 100%; border-radius: 999px;
+        background: var(--bright); }
+.bar-warn { background: #D97706; }
+.bar-danger { background: var(--red); }
+.mode-row { display: flex; flex-wrap: wrap; gap: 6px 22px;
+        margin: 12px 0 2px; }
+.mode-opt { display: inline-flex; align-items: center; gap: 7px;
+        font-size: 13.5px; font-weight: 500; color: var(--body);
+        margin: 0; cursor: pointer; }
+.mode-opt input { accent-color: var(--bright); width: 15px;
+        height: 15px; margin: 0; }
+fieldset { border: 0; margin: 10px 0 0; padding: 0; }
 label { display: block; font-size: 13px; font-weight: 600;
-        margin: 10px 0 4px; }
+        margin: 12px 0 5px; color: var(--ink); }
 input[type=text], input[type=number], select, textarea {
-  width: 100%; padding: 10px 12px; border: 1px solid #C3D2E6;
-  border-radius: 10px; font-size: 14px; font-family: inherit;
+  width: 100%; padding: 11px 13px; border: 1px solid var(--field-border);
+  border-radius: 8px; font-size: 14.5px; font-family: inherit;
   color: var(--body); background: #fff;
-  transition: border-color .18s ease, box-shadow .18s ease; }
+  transition: border-color .16s ease, box-shadow .16s ease; }
 input[type=text]:focus, input[type=number]:focus, select:focus,
 textarea:focus { outline: none; border-color: var(--bright);
-  box-shadow: 0 0 0 3px rgba(0, 112, 186, .18); }
-textarea { min-height: 74px; }
+  box-shadow: 0 0 0 3px rgba(0, 112, 186, .16); }
+textarea { min-height: 54px; resize: vertical; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 12px 16px;
+        align-items: center; justify-content: space-between;
+        margin-top: 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
 button { background: var(--bright); color: #fff; border: 0;
-         border-radius: 999px; padding: 11px 26px; font-size: 15px;
+         border-radius: 8px; padding: 12px 24px; font-size: 15px;
          font-weight: 600; cursor: pointer;
-         box-shadow: 0 2px 8px rgba(0, 112, 186, .30);
-         transition: background .18s ease, box-shadow .18s ease,
-                     transform .12s ease; }
-button:hover { background: var(--bright-hover);
-               box-shadow: 0 4px 14px rgba(0, 112, 186, .35); }
+         transition: background .16s ease, transform .16s ease; }
+button:hover { background: var(--bright-hover); }
 button:active { transform: translateY(1px); }
 button:focus-visible, a:focus-visible {
   outline: 2px solid var(--sky); outline-offset: 2px; }
-button.secondary { background: #EAF1F8; color: var(--blue);
-                   box-shadow: none; }
-button.secondary:hover { background: #D9E8F6; box-shadow: none; }
-.chip { background: #EAF3FB; border: 1px solid #BCD9F2;
-        color: var(--blue); box-shadow: none;
-        border-radius: 999px; padding: 6px 14px; font-size: 12.5px;
-        font-weight: 500; margin: 4px 6px 0 0;
-        transition: background .18s ease, border-color .18s ease; }
-.chip:hover { background: #D6EAF9; border-color: var(--sky);
-              box-shadow: none; }
-.card { border-radius: 16px; padding: 20px 22px; margin-top: 18px;
-        border: 1px solid var(--border); background: #fff;
+button.secondary { background: #fff; color: var(--ink);
+                   border: 1px solid var(--field-border); }
+button.secondary:hover { background: #F1F3F6; }
+.chip { background: #fff; border: 1px solid var(--field-border);
+        color: var(--ink); border-radius: 8px; padding: 8px 14px;
+        font-size: 13.5px; font-weight: 500; cursor: pointer;
+        box-shadow: none;
+        transition: border-color .16s ease, color .16s ease,
+                    background .16s ease; }
+.chip:hover { border-color: var(--bright); color: var(--bright);
+              background: #F4F9FD; box-shadow: none; }
+.card { border-radius: 12px; padding: 22px 24px; margin-top: 20px;
+        border: 1px solid var(--hairline); background: #fff;
         box-shadow: var(--shadow-sm); }
-.card-pass { border-left: 6px solid var(--green); }
-.card-reject { border-left: 6px solid var(--red); }
-.card h2 { margin: 0 0 10px; font-size: 18px; color: var(--ink);
+.card-pass { border-color: var(--green-border); }
+.card-reject { border-color: var(--red-border); }
+.card h2 { margin: 0 0 10px; font-size: 17.5px; color: var(--ink);
            letter-spacing: -.01em; }
-.card dl { display: grid; grid-template-columns: 110px 1fr; gap: 3px 10px;
-           font-size: 14px; margin: 0 0 6px; }
+.card h3 { font-size: 14.5px; margin: 16px 0 8px; color: var(--ink); }
+.card dl { display: grid; grid-template-columns: 110px 1fr;
+           gap: 3px 10px; font-size: 14px; margin: 0 0 6px; }
 .card dt { font-weight: 600; color: var(--muted); }
 .card dd { margin: 0; }
 .card ul { margin: 4px 0; padding-left: 20px; font-size: 14px; }
-.exec { font-size: 13.5px; background: #EAF6EE; border-radius: 10px;
+.exec { font-size: 13.5px; background: var(--green-bg);
+        border: 1px solid var(--green-border); border-radius: 8px;
         padding: 10px 12px; }
-.exec-fail { background: #FDECEA; }
-.exec-pending { background: #FFF6DB; }
-.mini-btn { box-shadow: none; border-radius: 999px;
-            padding: 4px 14px; font-size: 12.5px; }
+.exec-fail { background: var(--red-bg); border-color: var(--red-border); }
+.exec-pending { background: var(--amber-bg); border-color: #EBD48A; }
+.mini-btn { padding: 5px 13px; font-size: 12.5px; border-radius: 7px;
+            box-shadow: none; }
 .mini-btn:hover { box-shadow: none; }
 .mini-btn:disabled { background: #94A3B8; cursor: wait; }
 table.plain { border-collapse: collapse; width: 100%; font-size: 14px; }
-table.plain th, table.plain td { border-bottom: 1px solid var(--border);
-  padding: 8px 10px; text-align: left; vertical-align: top; }
-table.plain th { color: var(--blue); width: 220px; }
+table.plain th, table.plain td { border-bottom: 1px solid var(--hairline);
+  padding: 9px 10px; text-align: left; vertical-align: top; }
+table.plain th { color: var(--muted); font-weight: 600; width: 220px; }
 .pill { display: inline-block; padding: 3px 11px; border-radius: 999px;
         font-weight: 700; font-size: 12px; letter-spacing: .01em; }
 .pill-pass { background: var(--green-bg); color: var(--green-dark); }
 .pill-reject { background: var(--red-bg); color: var(--red-dark); }
-.pill-created { background: #FEF3C7; color: #92400E; }
-.tag-sim { background: #FDE68A; color: #92400E; border-radius: 999px;
-           padding: 2px 9px; font-size: 11.5px; font-weight: 700; }
+.pill-created { background: #FEF3C7; color: var(--amber-dark); }
+.tag-sim { background: #FDE68A; color: var(--amber-dark);
+           border-radius: 999px; padding: 2px 9px; font-size: 11.5px;
+           font-weight: 700; }
 .tag-live { background: #E1F0FA; color: var(--blue); border-radius: 999px;
             padding: 2px 9px; font-size: 11.5px; font-weight: 700; }
-.error { background: #FDECEA; border: 1px solid #F2B8B5; color: #7F1D1D;
-         border-radius: 12px; padding: 12px 16px; margin-top: 14px; }
+.error { background: var(--red-bg); border: 1px solid #F2B8B5;
+         color: #7F1D1D; border-radius: 10px; padding: 12px 16px;
+         margin-top: 14px; }
 .muted { color: var(--muted); font-size: 13px; line-height: 1.55; }
-#ledger-grid { height: 560px; width: 100%; border-radius: 12px;
-               overflow: hidden; border: 1px solid var(--border); }
+#ledger-grid { height: 560px; width: 100%; border-radius: 10px;
+               overflow: hidden; border: 1px solid var(--hairline); }
 .ag-theme-quartz {
   --ag-accent-color: var(--bright);
-  --ag-header-background-color: var(--blue);
-  --ag-header-foreground-color: #FFFFFF;
-  --ag-border-color: var(--border);
-  --ag-row-hover-color: rgba(0, 112, 186, .06);
-  --ag-selected-row-background-color: rgba(0, 156, 222, .14);
-  --ag-range-selection-border-color: var(--sky);
+  --ag-header-background-color: #FFFFFF;
+  --ag-header-foreground-color: var(--ink);
+  --ag-border-color: var(--hairline);
+  --ag-row-hover-color: rgba(0, 112, 186, .05);
+  --ag-selected-row-background-color: rgba(0, 112, 186, .09);
+  --ag-range-selection-border-color: var(--bright);
   --ag-input-focus-border-color: var(--bright);
-  --ag-font-family: system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", sans-serif;
+  --ag-font-family: "Inter", system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", sans-serif;
 }
+.ag-theme-quartz .ag-header { border-bottom: 1px solid var(--hairline); }
 .hidden { display: none; }
-.hero { background: linear-gradient(120deg, var(--navy) 0%,
-                  var(--blue) 52%, var(--sky) 125%);
-         color: #fff; border-radius: 16px; padding: 30px 32px;
-         margin-bottom: 22px; box-shadow: var(--shadow-md);
-         position: relative; overflow: hidden; }
-.hero::before { content: ""; position: absolute; width: 520px;
-         height: 520px; border-radius: 50%; top: -220px; right: -140px;
-         background: radial-gradient(closest-side,
-           rgba(0, 156, 222, .55), rgba(0, 156, 222, 0));
-         pointer-events: none; }
-.hero::after { content: ""; position: absolute; width: 150%;
-         height: 320px; border-radius: 50%; left: -25%; bottom: -215px;
-         background: rgba(255, 255, 255, .06);
-         box-shadow: 0 -20px 0 rgba(255, 255, 255, .045),
-                     0 -42px 0 rgba(255, 255, 255, .028);
-         pointer-events: none; }
-.hero h2 { margin: 0 0 8px; font-size: 27px; font-weight: 700;
-            letter-spacing: -.02em; position: relative; z-index: 1; }
-.hero-sub { margin: 0 0 22px; color: #D8E9FA; font-size: 14.5px;
-            max-width: 780px; line-height: 1.55;
-            position: relative; z-index: 1; }
-.steps { display: flex; align-items: stretch; gap: 10px;
-         perspective: 1100px; position: relative; z-index: 1; }
-.step { flex: 1 1 0; background: rgba(255, 255, 255, .10);
-        border: 1px solid rgba(255, 255, 255, .30); border-radius: 14px;
-        padding: 16px;
-        backdrop-filter: blur(6px) saturate(1.25);
-        -webkit-backdrop-filter: blur(6px) saturate(1.25);
-        transform-style: preserve-3d;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35),
-                    0 12px 26px rgba(0, 15, 50, .28);
-        transition: background .2s ease, transform .25s ease,
-                    box-shadow .25s ease; }
-.step:hover { background: rgba(255, 255, 255, .17);
-              transform: translateY(-4px) rotateX(3.5deg)
-                         rotateY(-3.5deg);
-              box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4),
-                          0 22px 38px rgba(0, 15, 50, .38); }
-.step-num { display: inline-block; background: #fff; color: var(--blue);
-            font-weight: 700; font-size: 12.5px; border-radius: 50%;
-            width: 24px; height: 24px; line-height: 24px;
-            text-align: center; margin-bottom: 10px;
-            transform: translateZ(16px);
-            box-shadow: 0 4px 10px rgba(0, 15, 50, .30); }
-.step-name { font-weight: 700; font-size: 15px; margin-bottom: 5px;
-             letter-spacing: -.005em; }
-.step p { margin: 0; font-size: 12.5px; line-height: 1.5;
-          color: rgba(255, 255, 255, .86); }
-.step-arrow { align-self: center; font-size: 18px; flex: 0 0 auto;
-              color: rgba(255, 255, 255, .75); }
-.stats { display: grid; grid-template-columns: repeat(4, 1fr);
-         gap: 16px; margin-bottom: 22px; }
-.stat { background: #fff; border: 1px solid var(--border);
-        border-radius: 14px; padding: 18px;
-        box-shadow: inset 0 1px 0 #FFFFFF, var(--shadow-sm);
-        transition: transform .18s ease, box-shadow .18s ease; }
-.stat:hover { transform: translateY(-3px);
-              box-shadow: inset 0 1px 0 #FFFFFF, var(--shadow-md); }
-.stat-label { font-size: 11.5px; font-weight: 700; letter-spacing: .06em;
-              text-transform: uppercase; color: var(--muted); }
-.stat-value { font-size: 26px; font-weight: 700; margin: 5px 0 6px;
-              color: var(--ink); letter-spacing: -.015em; }
-.stat-sub { margin: 0; font-size: 12.5px; color: var(--muted);
-            line-height: 1.5; }
-.progress { background: #E6EDF5; border-radius: 999px; height: 9px;
-            overflow: hidden; margin: 9px 0; }
-.progress-bar { height: 100%; border-radius: 999px; }
-.bar-ok { background: linear-gradient(90deg, var(--bright), var(--sky)); }
-.bar-warn { background: #D97706; }
-.bar-danger { background: var(--red); }
-.card h3 { font-size: 15px; margin: 16px 0 8px; color: var(--ink); }
-.trace { list-style: none; margin: 6px 0 2px; padding: 0; }
-.trace-step { display: flex; flex-wrap: wrap; gap: 6px 10px;
-              align-items: baseline; padding: 9px 12px;
-              border-left: 4px solid #CBD5E1; border-radius: 0 10px 10px 0;
-              background: #F7FAFD; margin-bottom: 6px; font-size: 13.5px; }
-.trace-pass { border-left-color: var(--green); }
-.trace-reject, .trace-error { border-left-color: var(--red);
-                              background: #FDF3F2; }
-.trace-flag, .trace-pending { border-left-color: #D97706;
-                              background: #FFFBEB; }
+.visually-hidden { position: absolute; width: 1px; height: 1px;
+        overflow: hidden; clip: rect(0 0 0 0);
+        clip-path: inset(50%); white-space: nowrap; }
+footer { border-top: 1px solid var(--hairline); }
+.footer-inner { max-width: 1240px; margin: 0 auto;
+        padding: 20px 22px 34px; display: flex; flex-wrap: wrap;
+        gap: 6px 20px; font-size: 13px; color: var(--muted);
+        line-height: 1.55; }
+.footer-inner a { font-weight: 600; }
+h1, h2, h3 { text-wrap: balance; }
+.stat-value, .card dd, table.plain td,
+#ledger-grid .ag-cell { font-variant-numeric: tabular-nums; }
+.card dd, .exec, table.plain td,
+.trace-detail { overflow-wrap: break-word; }
+button, a, input, select, textarea, label {
+  touch-action: manipulation; }
+* { -webkit-tap-highlight-color: rgba(0, 112, 186, .14); }
+.skip-link { position: absolute; left: 16px; top: -60px; z-index: 20;
+             background: var(--blue); color: #fff; padding: 9px 18px;
+             border-radius: 999px; font-weight: 600; font-size: 14px;
+             text-decoration: none; transition: top .18s ease; }
+.skip-link:focus-visible { top: 12px; color: #fff; }
+.trace { list-style: none; margin: 6px 0 2px; padding: 10px 16px 4px;
+         background: #F5F9F6; border: 1px solid var(--green-border);
+         border-radius: 10px; }
+.card-reject .trace { background: #FCF4F3;
+                      border-color: var(--red-border); }
+.trace-step { display: flex; flex-wrap: wrap; gap: 5px 10px;
+              align-items: baseline; padding: 8px 0; font-size: 13.5px;
+              border-top: 1px solid rgba(10, 31, 68, .07); }
+.trace-step:first-child { border-top: 0; }
 .trace-num { background: var(--blue); color: #fff; border-radius: 50%;
              width: 19px; height: 19px; line-height: 19px;
              text-align: center; font-size: 11px; font-weight: 700;
-             flex: 0 0 auto; }
+             flex: 0 0 auto; align-self: center; }
 .trace-name { font-weight: 700; color: var(--ink); }
 .trace-status { font-size: 11px; font-weight: 700; padding: 2px 9px;
-                border-radius: 999px; background: #E6EDF5;
+                border-radius: 999px; background: #E7EAEE;
                 color: var(--body); }
-.trace-status-pass { background: var(--green-bg); color: var(--green-dark); }
+.trace-status-pass { background: var(--green-bg);
+                     color: var(--green-dark); }
 .trace-status-reject, .trace-status-error { background: var(--red-bg);
                                             color: var(--red-dark); }
 .trace-status-flag, .trace-status-pending { background: #FEF3C7;
-                                            color: #92400E; }
+                                            color: var(--amber-dark); }
 .trace-detail { flex: 1 1 100%; color: var(--body); }
-footer { max-width: 1180px; margin: 0 auto; padding: 0 22px 36px; }
-.footer-band { background: linear-gradient(120deg, var(--navy),
-                 var(--blue)); border-radius: 16px;
-         padding: 20px 26px; box-shadow: var(--shadow-md);
-         display: flex; flex-wrap: wrap; gap: 6px 20px;
-         font-size: 13px; color: #C9DFF7; line-height: 1.55; }
-.footer-band a { color: #8FD3FF; font-weight: 600; }
-.footer-band a:hover { color: #fff; }
-@media (max-width: 900px) {
-  .stats { grid-template-columns: 1fr 1fr; }
-  .steps { flex-direction: column; }
-  .step-arrow { transform: rotate(90deg); }
-  .hero { padding: 24px 20px; }
-  .hero h2 { font-size: 23px; }
-  .panel { padding: 20px; }
+/* ---- Motion: page reveal, hero pipeline loop, live trace ---- */
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); }
+                     to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.badge { animation: fade-in .5s ease backwards; }
+.hero-title { animation: rise-in .55s cubic-bezier(.22, .9, .3, 1)
+             backwards; animation-delay: .07s; }
+.hero-sub { animation: rise-in .55s cubic-bezier(.22, .9, .3, 1)
+             backwards; animation-delay: .15s; }
+.panel { animation: fade-in .5s ease backwards;
+         animation-delay: .38s; }
+.diagram { animation: rise-in .55s cubic-bezier(.22, .9, .3, 1)
+           backwards; animation-delay: .22s; }
+.stats-strip { animation: rise-in .55s cubic-bezier(.22, .9, .3, 1)
+               backwards; animation-delay: .32s; }
+.card { animation: rise-in .45s cubic-bezier(.22, .9, .3, 1) backwards; }
+.trace-step { animation: rise-in .45s cubic-bezier(.22, .9, .3, 1)
+              backwards;
+              animation-delay: calc((var(--i, 1) - 1) * 90ms); }
+.gate-node { position: relative; }
+.gate-glow { position: absolute; inset: 6px; border-radius: 50%;
+        background: rgba(0, 112, 186, .13); opacity: 0;
+        transform: scale(.6);
+        transition: opacity .35s ease,
+                    transform .45s cubic-bezier(.34, 1.3, .64, 1); }
+.gate-ring { position: absolute; inset: -2px; border-radius: 50%;
+        border: 2px solid var(--bright); opacity: 0;
+        transform: scale(.92); pointer-events: none;
+        transition: opacity .3s ease,
+                    transform .45s cubic-bezier(.34, 1.3, .64, 1); }
+.gate.lit .gate-glow { opacity: 1; transform: scale(1); }
+.gate.lit .gate-ring { opacity: 1; transform: scale(1.05); }
+.gate.lit .gate-node svg { transform: scale(1.08); }
+.gate-node svg { transition:
+        transform .45s cubic-bezier(.34, 1.3, .64, 1); }
+.gate-arrow { position: relative; }
+.pulse-dot { position: absolute; left: 50%; top: 50%; width: 7px;
+        height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%;
+        background: var(--bright); opacity: 0; }
+.gate-arrow.flow .pulse-dot { animation:
+        dot-travel .6s cubic-bezier(.3, .7, .3, 1) both; }
+@keyframes dot-travel {
+  0% { opacity: 0; transform: translateX(-10px); }
+  25% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(10px); } }
+.diagram.anim-run .sample-trace .t-item { opacity: 0;
+        transform: translateY(7px);
+        transition: opacity .45s ease,
+                    transform .45s cubic-bezier(.22, .9, .3, 1); }
+.diagram.anim-run .sample-trace .t-item.in { opacity: 1;
+        transform: none; }
+.anim-toggle { display: none; position: absolute; top: 12px;
+        right: 12px; width: 30px; height: 30px; padding: 0;
+        border-radius: 50%; background: #fff;
+        border: 1px solid var(--hairline); color: var(--muted);
+        align-items: center; justify-content: center;
+        box-shadow: none; z-index: 2; }
+.anim-toggle:hover { background: #F1F3F6; box-shadow: none; }
+.diagram.anim-run .anim-toggle { display: inline-flex; }
+@media (max-width: 1020px) {
+  .diagram-grid { flex-direction: column; }
+  .sample-card, .sample-trace { flex: none; }
+  .stats-strip { grid-template-columns: 1fr 1fr; }
+  .stat-cell:nth-child(odd) { border-left: 0; }
+  .stat-cell:nth-child(n+3) { border-top: 1px solid var(--hairline); }
+}
+@media (max-width: 640px) {
+  .gates { flex-wrap: wrap; gap: 14px 0; }
+  .gate { flex: 1 1 30%; }
+  .gate-arrow { display: none; }
+  .stats-strip { grid-template-columns: 1fr; }
+  .stat-cell + .stat-cell { border-left: 0;
+        border-top: 1px solid var(--hairline); }
+  .wordmark { font-size: 22px; }
+  .panel, .diagram { padding: 20px; }
+  .grid2 { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .step, .stat, button, .chip, nav a,
+  .gate-node, button, .chip, nav a, .skip-link,
   input[type=text], input[type=number], select, textarea {
     transition: none; }
-  .step:hover, .stat:hover { transform: none; }
-  .step-num { transform: none; }
+  .gate:hover .gate-node { transform: none; }
+  .badge, .hero-title, .hero-sub, .panel, .diagram, .stats-strip,
+  .card, .trace-step, .gate-arrow.flow .pulse-dot {
+    animation: none; }
+  .gate-glow, .gate-ring, .gate-node svg,
+  .diagram.anim-run .sample-trace .t-item { transition: none; }
+  .anim-toggle { display: none !important; }
 }
+@media (pointer: fine) { html { overscroll-behavior: none; } }
 """
 
 _PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E9E9EB">
 <title>__TITLE__ — VaultPay Guard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 __HEAD_EXTRA__
 <style>__CSS__</style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <header>
-  <h1>VaultPay Guard</h1>
-  <span class="tagline">A policy-guarded AI payment agent on PayPal</span>
-  <nav>
-    <a href="/">New Payment</a>
-    <a href="/ledger">Audit Ledger</a>
-    <a href="/policy">Policy</a>
-  </nav>
+  <div class="header-inner">
+    <a class="brand" href="/">
+      <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.6 4.8 5.4v6.1c0 4.5 3 7.5 7.2 9 4.2-1.5 7.2-4.5 7.2-9V5.4L12 2.6Z" stroke="#003087" stroke-width="2" stroke-linejoin="round"/><path d="m8.7 11.7 2.3 2.3 4.3-4.5" stroke="#003087" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="wordmark">VaultPay Guard</span>
+    </a>
+    <nav>
+      <a href="/">New Payment</a>
+      <a href="/ledger">Audit Ledger</a>
+      <a href="/policy">Policy</a>
+    </nav>
+  </div>
 </header>
-<main>
+<main id="main-content">
 __BADGE__
 __BODY__
 </main>
 <footer>
-  <div class="footer-band">
+  <div class="footer-inner">
   <span><strong>VaultPay Guard</strong> — built for the PayPal AI
   Hackathon.</span>
   <a href="https://github.com/dropjoin/vaultpay-guard" target="_blank"
@@ -894,6 +1015,11 @@ def _page(app: VaultPayWebApp, title: str, body: str,
            .replace("__HEAD_EXTRA__", head_extra)
            .replace("__BADGE__", badge_html(status))
            .replace("__BODY__", body))
+    current = {"New Payment": "/", "Audit Ledger": "/ledger",
+               "Policy": "/policy"}.get(title)
+    if current:
+        doc = doc.replace(f'<a href="{current}">',
+                          f'<a href="{current}" aria-current="page">', 1)
     return doc.encode("utf-8")
 
 
@@ -916,26 +1042,132 @@ _PIPELINE_STEPS = [
 ]
 
 
+_SVG_BOT = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="#0070BA" '
+    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M12 5.4V8"/>'
+    '<circle cx="12" cy="3.8" r="1.3" fill="#0070BA" stroke="none"/>'
+    '<rect x="4.8" y="8" width="14.4" height="10.6" rx="2.6"/>'
+    '<circle cx="9.2" cy="12.6" r="1.15" fill="#0070BA" stroke="none"/>'
+    '<circle cx="14.8" cy="12.6" r="1.15" fill="#0070BA" stroke="none"/>'
+    '<path d="M9.6 15.9h4.8"/>'
+    '<path d="M3.4 11.2v2.2M20.6 11.2v2.2"/></svg>')
+
+_SVG_SHIELD = (
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<path d="M12 3 5.2 5.6v5.9c0 4.1 2.8 6.9 6.8 8.4 4-1.5 6.8-4.3 '
+    '6.8-8.4V5.6L12 3Z" fill="#0070BA"/></svg>')
+
+_SVG_SHIELD_CHECK = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="#0070BA" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M12 3 5.2 5.6v5.9c0 4.1 2.8 6.9 6.8 '
+    '8.4 4-1.5 6.8-4.3 6.8-8.4V5.6L12 3Z"/>'
+    '<path d="m8.8 11.6 2.2 2.2 4.2-4.4"/></svg>')
+
+_SVG_PAYPAL = (
+    '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    '<text x="7.8" y="18.8" font-size="17" font-weight="800" '
+    'font-style="italic" fill="#009CDE">P</text>'
+    '<text x="5" y="17.9" font-size="17" font-weight="800" '
+    'font-style="italic" fill="#003087">P</text></svg>')
+
+_SVG_ARROW = (
+    '<svg viewBox="0 0 24 12" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M2 6h18.5M15.8 1.6 20.4 6l-4.6 4.4"/>'
+    "</svg>")
+
+_SVG_CARD = (
+    '<svg class="sample-icon" viewBox="0 0 24 24" aria-hidden="true">'
+    '<rect x="2.4" y="5.4" width="19.2" height="13.2" rx="2" '
+    'fill="#0070BA"/><rect x="2.4" y="9" width="19.2" height="2.7" '
+    'fill="#FFFFFF" opacity=".88"/>'
+    '<rect x="5" y="14.3" width="4.4" height="2.1" rx=".6" '
+    'fill="#FFFFFF" opacity=".88"/></svg>')
+
+_SVG_CHECK = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" '
+    'stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="m4.5 12.5 5 5L19.5 7"/></svg>')
+
+
+def _gear_svg() -> str:
+    """Two overlapping gears (Policy Engine gate), drawn from parts."""
+    teeth = "".join(
+        f'<rect x="10.85" y="3.7" width="2.3" height="3.9" rx="1" '
+        f'transform="rotate({a} 12 12)"/>' for a in range(0, 360, 45))
+    gear = (f"{teeth}"
+            '<circle cx="12" cy="12" r="6.3"/>'
+            '<circle cx="12" cy="12" r="2.8" fill="#FFFFFF"/>')
+    return ('<svg viewBox="0 0 24 24" aria-hidden="true">'
+            f'<g fill="#0070BA">{gear}</g>'
+            '<g transform="translate(10 10.2) scale(0.62)" '
+            f'fill="#009CDE">{gear}</g></svg>')
+
+
+def _gate_icons() -> list[str]:
+    return [_SVG_BOT, _SVG_SHIELD, _gear_svg(), _SVG_SHIELD_CHECK,
+            _SVG_PAYPAL]
+
+
 def _hero_html() -> str:
-    """The pipeline as visual step cards, under the page header."""
-    cards = []
-    for i, (name, blurb) in enumerate(_PIPELINE_STEPS, 1):
-        cards.append(
-            f'<div class="step"><div class="step-num">{i}</div>'
-            f'<div class="step-name">{_esc(name)}</div>'
-            f'<p>{_esc(blurb)}</p></div>')
-        if i < len(_PIPELINE_STEPS):
-            cards.append('<div class="step-arrow" aria-hidden="true">'
-                         "&rarr;</div>")
-    return ('<section class="hero">'
-            "<h2>Five gates stand between a request and your money</h2>"
-            '<p class="hero-sub">An AI may draft a payment and a second '
-            "AI may review it, but the decision floor is deterministic "
-            "code — and a rejection at any gate stops the payment and "
-            "is written to the audit ledger.</p>"
-            '<div class="steps">' + "".join(cards) + "</div></section>")
+    """Hero text block plus the static how-it-works diagram panel.
 
-
+    The diagram is illustrative (a marked sample payment and sample
+    trace); the live pipeline runs from the form below it and the
+    live result card reuses the same trace styling.
+    """
+    icons = _gate_icons()
+    gates = []
+    for i, (name, _blurb) in enumerate(_PIPELINE_STEPS, 1):
+        gates.append(
+            f'<li class="gate"><span class="gate-node">'
+            f'<span class="gate-glow"></span>{icons[i - 1]}'
+            f'<span class="gate-ring"></span></span>'
+            f'<span class="gate-label">{i} {_esc(name)}</span>'
+            "</li>")
+        gates.append('<li class="gate-arrow" aria-hidden="true">'
+                     f'{_SVG_ARROW}<span class="pulse-dot"></span>'
+                     "</li>")
+    return (
+        '<section class="hero-head">'
+        "<h2 class=\"hero-title\">Five gates stand between a request "
+        "and your money.</h2>"
+        '<p class="hero-sub">Automated policy checks verify every '
+        "payment before it reaches PayPal — an AI drafts the request, "
+        "a second AI reviews it, and deterministic code has the final "
+        "say.</p></section>"
+        '<section class="panel diagram" aria-label="How the guard '
+        'works">'
+        '<button type="button" id="anim-toggle" class="anim-toggle" '
+        'aria-label="Pause animation" aria-pressed="false">'
+        '<svg viewBox="0 0 24 24" width="11" height="11" '
+        'aria-hidden="true"><rect x="5" y="4" width="5" height="16" '
+        'rx="1" fill="currentColor"/><rect x="14" y="4" width="5" '
+        'height="16" rx="1" fill="currentColor"/></svg></button>'
+        '<div class="diagram-grid">'
+        '<div class="sample-card">'
+        '<span class="sample-tag"># SAMPLE PAYMENT</span>'
+        f'<div class="sample-main">{_SVG_CARD}'
+        '<p class="sample-text">Pay <strong>$120.00</strong> to '
+        "<strong>billing@northwind.example</strong></p></div>"
+        '<p class="sample-dest">Destination: billable service, '
+        "sandbox</p></div>"
+        '<ol class="gates">' + "".join(gates) + "</ol>"
+        '<aside class="sample-trace">'
+        f'<span class="pill-solid-pass t-item">{_SVG_CHECK} PASS</span>'
+        '<h3 class="t-item">Decision trace</h3><ul>'
+        '<li class="t-item">Initialized: request ingested, ID '
+        "vp_8f2a9b3</li>"
+        '<li class="t-item">Passed payload scan: no injection '
+        "patterns detected</li>"
+        '<li class="t-item">Policy matched: amount $120.00 &le; '
+        "per-transaction cap $250.00</li>"
+        '<li class="t-item">Independent check: payee allowlisted, '
+        "jurisdiction US</li>"
+        "</ul></aside>"
+        "</div></section>")
 def _daily_bar(view: dict) -> tuple[float, str]:
     """(percent of daily cap spent, css class) for a progress bar."""
     cap = view.get("daily_cap_minor") or 0
@@ -947,36 +1179,41 @@ def _daily_bar(view: dict) -> tuple[float, str]:
 
 
 def _stats_html(app: VaultPayWebApp) -> str:
-    """Live stat cards, fed from the same view as the Policy page."""
+    """Live stat strip, fed from the same view as the Policy page."""
     view = app.policy_view()
     pct, bar_cls = _daily_bar(view)
     names = ", ".join(p["name"] for p in view["payees"])
     frozen = (' <span class="pill pill-reject">FROZEN</span>'
               if view["frozen"] else "")
     return (
-        '<section class="stats">'
-        '<div class="stat"><div class="stat-label">Per-transaction '
-        f'cap</div><div class="stat-value">{_esc(view["per_tx_cap"])}'
-        '</div><p class="stat-sub">Hard ceiling for any single '
-        "payment, enforced by the policy engine.</p></div>"
-        '<div class="stat"><div class="stat-label">Daily cap</div>'
-        f'<div class="stat-value">{_esc(view["daily_cap"])}</div>'
-        f'<div class="progress"><div class="progress-bar {bar_cls}" '
+        '<section class="stats-strip" aria-label="Policy limits at '
+        'a glance">'
+        '<div class="stat-cell"><div class="stat-label">'
+        'Per-transaction cap</div>'
+        '<div class="stat-value"><span class="stat-num">'
+        f'{_esc(view["per_tx_cap"])}</span></div>'
+        '<p class="stat-sub">Hard ceiling for any single payment, '
+        "enforced by the policy engine.</p></div>"
+        '<div class="stat-cell"><div class="stat-label">Daily cap'
+        '</div><div class="stat-value"><span class="stat-num">'
+        f'{_esc(view["daily_cap"])}</span></div>'
+        f'<div class="progress" role="progressbar" aria-valuemin="0" '
+        f'aria-valuemax="100" aria-valuenow="{pct:.0f}" '
+        f'aria-label="Daily budget used">'
+        f'<div class="progress-bar {bar_cls}" '
         f'style="width:{pct:.1f}%"></div></div>'
         f'<p class="stat-sub">{_esc(view["spent_today"])} spent today '
         f'({pct:.0f}%) · {_esc(view["daily_headroom"])} headroom '
         "left.</p></div>"
-        '<div class="stat"><div class="stat-label">Account balance'
-        f'</div><div class="stat-value">{_esc(view["balance"])}{frozen}'
-        '</div><p class="stat-sub">Balance from the active policy '
-        "config — the ceiling every payment is checked against.</p>"
-        "</div>"
-        '<div class="stat"><div class="stat-label">Allowlisted '
-        f'payees</div><div class="stat-value">{len(view["payees"])}'
+        '<div class="stat-cell"><div class="stat-label">Account '
+        f'balance</div><div class="stat-value"><span class="stat-num">{_esc(view["balance"])}</span>'
+        f'{frozen}</div><p class="stat-sub">Balance from the active '
+        "policy config — the ceiling every payment is checked "
+        "against.</p></div>"
+        '<div class="stat-cell"><div class="stat-label">Allowlisted '
+        f'payees</div><div class="stat-value"><span class="stat-num">{len(view["payees"])}</span>'
         f'</div><p class="stat-sub">{_esc(names)}</p></div>'
         "</section>")
-
-
 def _index_body(app: VaultPayWebApp) -> str:
     """Home page: hero pipeline, live stats, then the payment form."""
     return _hero_html() + _stats_html(app) + _INDEX_BODY
@@ -985,44 +1222,45 @@ def _index_body(app: VaultPayWebApp) -> str:
 _INDEX_BODY = """
 <section class="panel">
   <h2>New payment request</h2>
-  <p class="muted">Every request runs the full pipeline: proposer
-  &rarr; injection guardrail &rarr; deterministic policy engine &rarr;
-  independent checker &rarr; PayPal. A rejection at any layer stops
-  the payment and is written to the audit ledger.</p>
-  <label><input type="radio" name="mode" value="text" checked>
-    Natural language (the proposer AI extracts the payment)</label>
-  <label><input type="radio" name="mode" value="structured">
-    Structured fields</label>
+  <div class="mode-row">
+    <label class="mode-opt"><input type="radio" name="mode" value="text" checked>
+      Natural language (the proposer AI extracts the payment)</label>
+    <label class="mode-opt"><input type="radio" name="mode" value="structured">
+      Structured fields</label>
+  </div>
 
   <fieldset id="fs-text">
-    <legend>Natural-language request</legend>
-    <textarea id="f-text" placeholder="Pay $120.00 to billing@northwind.example for hosting invoice INV-1042"></textarea>
-    <div>
+    <legend class="visually-hidden">Natural-language request</legend>
+    <label class="visually-hidden" for="f-text">Natural-language payment request</label>
+    <textarea id="f-text" name="text" placeholder="Pay $120.00 to billing@northwind.example for hosting invoice INV-1042"></textarea>
+  </fieldset>
+
+  <fieldset id="fs-structured" class="hidden">
+    <legend class="visually-hidden">Structured payment</legend>
+    <div class="grid2">
+      <div><label for="f-payee">Payee (allowlist id, name or email)</label>
+      <input type="text" id="f-payee" name="payee" autocomplete="off" spellcheck="false" placeholder="billing@northwind.example"></div>
+      <div><label for="f-reference">Reference / invoice</label>
+      <input type="text" id="f-reference" name="reference" autocomplete="off" spellcheck="false" placeholder="INV-1042"></div>
+      <div><label for="f-amount">Amount (major units)</label>
+      <input type="text" id="f-amount" name="amount" inputmode="decimal" autocomplete="off" placeholder="120.00"></div>
+      <div><label for="f-currency">Currency</label>
+      <input type="text" id="f-currency" name="currency" autocomplete="off" spellcheck="false" value="USD"></div>
+    </div>
+    <label for="f-memo">Memo (untrusted — scanned by the guardrail)</label>
+    <input type="text" id="f-memo" name="memo" autocomplete="off" placeholder="hosting invoice INV-1042">
+  </fieldset>
+
+  <div class="form-actions">
+    <div class="chips">
       <button type="button" class="chip" data-example="ok">Legit invoice</button>
       <button type="button" class="chip" data-example="over">Over the per-tx cap</button>
       <button type="button" class="chip" data-example="stranger">Payee not allowlisted</button>
       <button type="button" class="chip" data-example="poison">Prompt injection attempt</button>
     </div>
-  </fieldset>
-
-  <fieldset id="fs-structured" class="hidden">
-    <legend>Structured payment</legend>
-    <div class="grid2">
-      <div><label for="f-payee">Payee (allowlist id, name or email)</label>
-      <input type="text" id="f-payee" placeholder="billing@northwind.example"></div>
-      <div><label for="f-reference">Reference / invoice</label>
-      <input type="text" id="f-reference" placeholder="INV-1042"></div>
-      <div><label for="f-amount">Amount (major units)</label>
-      <input type="text" id="f-amount" placeholder="120.00"></div>
-      <div><label for="f-currency">Currency</label>
-      <input type="text" id="f-currency" value="USD"></div>
-    </div>
-    <label for="f-memo">Memo (untrusted — scanned by the guardrail)</label>
-    <input type="text" id="f-memo" placeholder="hosting invoice INV-1042">
-  </fieldset>
-
-  <p><button type="button" id="btn-run">Run through the guard</button></p>
-  <div id="result"></div>
+    <button type="button" id="btn-run">Run through the guard</button>
+  </div>
+  <div id="result" aria-live="polite"></div>
 </section>
 <script>
 const EXAMPLES = {
@@ -1041,9 +1279,17 @@ radios.forEach(r => r.addEventListener('change', syncMode));
 syncMode();
 document.querySelectorAll('[data-example]').forEach(btn =>
   btn.addEventListener('click', () => {
-    document.getElementById('f-text').value = EXAMPLES[btn.dataset.example];
+    const radio = document.querySelector('input[name=mode][value=text]');
+    if (radio && !radio.checked) { radio.checked = true; syncMode(); }
+    const text = document.getElementById('f-text');
+    text.value = EXAMPLES[btn.dataset.example];
+    text.focus();
   }));
-document.getElementById('btn-run').addEventListener('click', async () => {
+document.getElementById('btn-run').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  const btnLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Running\u2026';
   const mode = document.querySelector('input[name=mode]:checked').value;
   const payload = mode === 'text'
     ? {mode: 'text', text: document.getElementById('f-text').value}
@@ -1069,14 +1315,19 @@ document.getElementById('btn-run').addEventListener('click', async () => {
       '<p class="muted">Full record appended to the ' +
       '<a href="/ledger">audit ledger</a>.</p>';
   } catch (err) {
-    box.innerHTML = '<div class="error">Request failed: ' + err + '</div>';
+    box.innerHTML = '<div class="error">Request failed: ' + err +
+      ' Check your connection, then try again.</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = btnLabel;
   }
 });
 // Phase 2 for live orders: the decision card's "Complete capture"
 // button lands here. The card is re-rendered from the reconciled
 // record the server returns, so it shows the capture id on success.
-async function completeCapture(orderId) {
+async function completeCapture(orderId, btn) {
   const box = document.getElementById('result');
+  if (btn) btn.disabled = true;
   try {
     const resp = await fetch('/api/capture', {method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1085,6 +1336,7 @@ async function completeCapture(orderId) {
     if (!resp.ok) {
       box.innerHTML = '<div class="error">Capture failed: ' +
         (data.error || ('HTTP ' + resp.status)) + '</div>';
+      if (btn) btn.disabled = false;
       return;
     }
     box.innerHTML = data.card_html +
@@ -1093,12 +1345,131 @@ async function completeCapture(orderId) {
   } catch (err) {
     box.innerHTML = '<div class="error">Capture request failed: ' +
       err + '</div>';
+    if (btn) btn.disabled = false;
+  }
+}
+// --- Hero diagram animation -------------------------------------
+// A calm loop: a pulse travels the five gates in sequence, then
+// the sample decision trace checks in step by step. The static
+// final state is the default; this runs only when the user has
+// not asked for reduced motion, pauses while hovered, and has a
+// pause/play toggle.
+const diagram = document.querySelector('.diagram');
+const animToggle = document.getElementById('anim-toggle');
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><rect x="5" y="4" width="5" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="5" height="16" rx="1" fill="currentColor"/></svg>';
+const PLAY_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path d="M7 4.8v14.4c0 .9 1 1.5 1.8 1L20 13a1.2 1.2 0 0 0 0-2L8.8 3.9C8 3.4 7 4 7 4.8Z" fill="currentColor"/></svg>';
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let animTimers = [];
+let animInterval = null;
+let animPaused = false;
+function animClear() {
+  animTimers.forEach(clearTimeout);
+  animTimers = [];
+  if (animInterval) { clearInterval(animInterval); animInterval = null; }
+}
+function animReset() {
+  diagram.querySelectorAll('.gate.lit').forEach(g => g.classList.remove('lit'));
+  diagram.querySelectorAll('.gate-arrow.flow').forEach(a => a.classList.remove('flow'));
+  diagram.querySelectorAll('.sample-trace .t-item.in').forEach(el => el.classList.remove('in'));
+}
+function animCycle() {
+  animReset();
+  const gates = diagram.querySelectorAll('.gate');
+  const arrows = diagram.querySelectorAll('.gate-arrow');
+  const items = diagram.querySelectorAll('.sample-trace .t-item');
+  gates.forEach((gate, i) => {
+    animTimers.push(setTimeout(() => {
+      if (i > 0 && arrows[i - 1]) arrows[i - 1].classList.add('flow');
+      gate.classList.add('lit');
+    }, 350 + i * 650));
+  });
+  const traceStart = 350 + gates.length * 650 + 250;
+  items.forEach((el, j) => {
+    animTimers.push(setTimeout(() => el.classList.add('in'),
+                                 traceStart + j * 230));
+  });
+}
+function animStart() {
+  if (animPaused) return;
+  diagram.classList.add('anim-run');
+  animClear();
+  animCycle();
+  animInterval = setInterval(animCycle, 8200);
+}
+if (diagram && !reduceMotion.matches) {
+  animStart();
+  diagram.addEventListener('mouseenter', animClear);
+  diagram.addEventListener('mouseleave', animStart);
+  if (animToggle) {
+    animToggle.addEventListener('click', () => {
+      animPaused = !animPaused;
+      animToggle.setAttribute('aria-pressed', String(animPaused));
+      animToggle.setAttribute('aria-label',
+        animPaused ? 'Play animation' : 'Pause animation');
+      animToggle.innerHTML = animPaused ? PLAY_ICON : PAUSE_ICON;
+      if (animPaused) { animClear(); } else { animStart(); }
+    });
+  }
+}
+// --- Stat count-up ------------------------------------------------
+// Numbers roll up once, the first time the stat strip scrolls
+// into view. The final values are the server-rendered ones;
+// under reduced motion nothing changes at all.
+const strip = document.querySelector('.stats-strip');
+if (strip && 'IntersectionObserver' in window && !reduceMotion.matches) {
+  const parsed = [];
+  strip.querySelectorAll('.stat-num').forEach(el => {
+    const text = el.textContent.trim();
+    let k = 0;
+    while (k < text.length && !(text[k] >= '0' && text[k] <= '9')) k++;
+    const numPart = text.slice(k);
+    const target = parseFloat(numPart.replace(/,/g, ''));
+    if (!numPart || isNaN(target)) return;
+    const decimals = (numPart.split('.')[1] || '').length;
+    parsed.push({el: el, prefix: text.slice(0, k), target: target,
+                 decimals: decimals, final: el.textContent});
+    el.textContent = text.slice(0, k) + (0).toFixed(decimals);
+  });
+  if (parsed.length) {
+    let counted = false;
+    function runCount() {
+      if (counted) return;
+      counted = true;
+      const t0 = performance.now();
+      const dur = 900;
+      (function frame(t) {
+        const p = Math.min(1, (t - t0) / dur);
+        const e = 1 - Math.pow(1 - p, 3);
+        parsed.forEach(o => {
+          o.el.textContent = o.prefix + (o.target * e).toFixed(o.decimals);
+        });
+        if (p < 1) { requestAnimationFrame(frame); }
+        else { parsed.forEach(o => { o.el.textContent = o.final; }); }
+      })(t0);
+    }
+    const io = new IntersectionObserver(entries => {
+      if (!entries.some(e => e.isIntersecting)) return;
+      io.disconnect();
+      runCount();
+    }, {threshold: .35});
+    io.observe(strip);
+    // Safety net: if the observer or animation frames never
+    // fire (odd browser states), restore the real values rather
+    // than leaving zeroes on screen.
+    setTimeout(() => {
+      if (!counted) {
+        counted = true;
+        io.disconnect();
+        parsed.forEach(o => { o.el.textContent = o.final; });
+      }
+    }, 2500);
   }
 }
 </script>
 """
 
-_LEDGER_HEAD = (f'<link rel="stylesheet" href="{AG_GRID_CSS}">'
+_LEDGER_HEAD = ('<link rel="preconnect" href="https://cdn.jsdelivr.net">'
+                f'<link rel="stylesheet" href="{AG_GRID_CSS}">'
                 f'<link rel="stylesheet" href="{AG_GRID_THEME_CSS}">'
                 f'<script src="{AG_GRID_JS}"></script>')
 
@@ -1248,7 +1619,10 @@ const gridOptions = {
   paginationPageSize: 10,
   paginationPageSizeSelector: [10, 25, 50],
   animateRows: true,
-  autoSizeStrategy: {type: 'fitGridWidth'}
+  autoSizeStrategy: {type: 'fitGridWidth'},
+  overlayNoRowsTemplate: '<span>No payments recorded yet. Run one ' +
+    'from the <a href="/">New Payment</a> page and it will appear ' +
+    'here.</span>'
 };
 let gridApi = null;
 function setRows(rows) {
@@ -1294,9 +1668,12 @@ def _ledger_body(app: VaultPayWebApp) -> str:
         "Refresh</button></p>"
         '<p id="ledger-msg" class="muted" role="status"></p>'
         '<div id="ledger-grid" class="ag-theme-quartz"></div>'
-        "<noscript><table class=\"plain\"><tr><th>Time</th><th>Payee</th>"
-        "<th>Amount</th><th>Decision</th><th>Stage</th><th>Execution</th>"
-        "<th>Reason</th><th>Mode</th></tr>" + "".join(fallback_rows)
+        "<noscript><table class=\"plain\"><tr>"
+        "<th scope=\"col\">Time</th><th scope=\"col\">Payee</th>"
+        "<th scope=\"col\">Amount</th><th scope=\"col\">Decision</th>"
+        "<th scope=\"col\">Stage</th><th scope=\"col\">Execution</th>"
+        "<th scope=\"col\">Reason</th><th scope=\"col\">Mode</th></tr>"
+        + "".join(fallback_rows)
         + "</table></noscript></section>" + _LEDGER_JS)
 
 
@@ -1315,21 +1692,25 @@ def _policy_body(app: VaultPayWebApp) -> str:
         "guardrails — by design there is no way for the agent (or this "
         "UI) to loosen them at runtime.</p>"
         '<table class="plain">'
-        f"<tr><th>Account frozen</th><td>{frozen}</td></tr>"
-        f"<tr><th>Per-transaction cap</th><td>{_esc(view['per_tx_cap'])}</td></tr>"
-        f"<tr><th>Daily cap</th><td>{_esc(view['daily_cap'])}</td></tr>"
-        f"<tr><th>Spent today (from ledger)</th><td>{_esc(view['spent_today'])}</td></tr>"
-        f"<tr><th>Daily headroom left</th><td>{_esc(view['daily_headroom'])}</td></tr>"
-        f"<tr><th>Account balance (seed)</th><td>{_esc(view['balance'])}</td></tr>"
-        f"<tr><th>Allowed currencies</th><td>{_esc(', '.join(view['allowed_currencies']))}</td></tr>"
+        f"<tr><th scope=\"row\">Account frozen</th><td>{frozen}</td></tr>"
+        f"<tr><th scope=\"row\">Per-transaction cap</th><td>{_esc(view['per_tx_cap'])}</td></tr>"
+        f"<tr><th scope=\"row\">Daily cap</th><td>{_esc(view['daily_cap'])}</td></tr>"
+        f"<tr><th scope=\"row\">Spent today (from ledger)</th><td>{_esc(view['spent_today'])}</td></tr>"
+        f"<tr><th scope=\"row\">Daily headroom left</th><td>{_esc(view['daily_headroom'])}</td></tr>"
+        f"<tr><th scope=\"row\">Account balance (seed)</th><td>{_esc(view['balance'])}</td></tr>"
+        f"<tr><th scope=\"row\">Allowed currencies</th><td>{_esc(', '.join(view['allowed_currencies']))}</td></tr>"
         "</table>"
-        f'<div class="progress"><div class="progress-bar {bar_cls}" '
+        f'<div class="progress" role="progressbar" aria-valuemin="0" '
+        f'aria-valuemax="100" aria-valuenow="{pct:.0f}" '
+        f'aria-label="Daily budget used">'
+        f'<div class="progress-bar {bar_cls}" '
         f'style="width:{pct:.1f}%"></div></div>'
         f'<p class="muted">Daily budget used: {pct:.0f}% — '
         f"{_esc(view['spent_today'])} of {_esc(view['daily_cap'])}."
         "</p></section>"
         '<section class="panel"><h2>Payee allowlist</h2>'
-        '<table class="plain"><tr><th>ID</th><th>Name</th><th>Email</th></tr>'
+        '<table class="plain"><tr><th scope="col">ID</th>'
+        '<th scope="col">Name</th><th scope="col">Email</th></tr>'
         + payee_rows + "</table>"
         '<p class="muted">Payments to anyone not on this list are '
         "rejected by the deterministic policy engine before any model "
