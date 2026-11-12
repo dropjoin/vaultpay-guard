@@ -27,6 +27,25 @@ class TestMoney(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_amount("not-a-number", "USD")
 
+    def test_parse_rejects_non_finite_as_value_error(self):
+        # "Infinity" used to escape as OverflowError and "NaN" with a
+        # misleading precision message; both are plain ValueErrors now,
+        # so callers map them to a 422 instead of crashing.
+        for text in ("Infinity", "-Infinity", "NaN", "inf"):
+            with self.assertRaises(ValueError, msg=text):
+                parse_amount(text, "USD")
+
+    def test_parse_rejects_absurd_magnitude_as_value_error(self):
+        # A compact exponent ("1e999999") used to escape as
+        # decimal.Overflow; it is a ValueError now.
+        for text in ("1e999999", "1e100000000", "-1e999999"):
+            with self.assertRaises(ValueError, msg=text):
+                parse_amount(text, "USD")
+
+    def test_parse_accepts_large_but_sane_amounts(self):
+        self.assertEqual(parse_amount("1000000.00", "USD"), 100_000_000)
+        self.assertEqual(parse_amount("1e6", "USD"), 100_000_000)
+
     def test_format_roundtrip(self):
         self.assertEqual(format_amount(12050, "USD"), "120.50")
         self.assertEqual(format_amount(1, "USD"), "0.01")

@@ -99,6 +99,33 @@ class TestPolicy(unittest.TestCase):
         self.assertEqual(v.verdict, "REJECT")
         self.assertTrue(any("failing closed" in r for r in v.reasons))
 
+    def test_foreign_currency_gets_no_spurious_balance_reason(self):
+        # EUR minor units must never be compared against a USD
+        # balance: the currency reason rejects, and no bogus
+        # "exceeds balance" reason may join it.
+        policy = make_policy(allowed_currencies=("USD", "EUR"))
+        v = evaluate(policy, make_state(balance_minor=5_00),
+                     proposal(currency="EUR", amount_minor=10_00))
+        self.assertEqual(v.verdict, "REJECT")
+        self.assertFalse(any("balance" in r for r in v.reasons))
+
+    def test_same_currency_balance_check_still_applies(self):
+        v = evaluate(make_policy(per_tx_cap_minor=10_000_00,
+                                 daily_cap_minor=10_000_00),
+                     make_state(balance_minor=50_00),
+                     proposal(amount_minor=120_00))
+        self.assertTrue(any("balance" in r for r in v.reasons))
+
+    def test_empty_candidate_matches_nobody(self):
+        # A payee with an empty email used to "match" an empty
+        # candidate string through the empty-email comparison.
+        policy = make_policy(payees=(Payee(id="vendor-x", name="Vendor X",
+                                           email=""),))
+        self.assertIsNone(policy.find_payee(""))
+        self.assertIsNone(policy.find_payee("   "))
+        v = evaluate(policy, make_state(), proposal(payee=""))
+        self.assertEqual(v.verdict, "REJECT")
+
     def test_frozen_account_rejects_everything(self):
         v = evaluate(make_policy(frozen=True), make_state(), proposal())
         self.assertEqual(v.verdict, "REJECT")

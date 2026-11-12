@@ -46,9 +46,10 @@ PORT=8000 python3 app.py        # then open http://localhost:8000/
    env vars, or a local `.env` copied from `.env.example`).
 4. Restart the service. The badge at the top of every page switches
    from "SANDBOX / SIMULATED MODE" to "PayPal SANDBOX API", and
-   payments now create and capture real **sandbox** orders — test
-   money only. Never put live credentials into a hackathon demo;
-   `PAYPAL_ENV` stays `sandbox`.
+   payments now create real **sandbox** orders — test money only.
+   Capture follows payer approval as a separate phase-2 step (see
+   "Execution states" in the README). Never put live credentials into
+   a hackathon demo; `PAYPAL_ENV` stays `sandbox`.
 
 ## Environment variables
 

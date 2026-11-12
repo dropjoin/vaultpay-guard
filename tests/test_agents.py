@@ -13,7 +13,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agents import (ProposalError, draft_proposal, run_checker)  # noqa: E402
+from src.agents import (ProposalError, _parse_checker_verdict,  # noqa: E402
+                        draft_proposal, proposal_from_mapping,
+                        run_checker)
 from src.guardrail import scan_untrusted_text  # noqa: E402
 from src.llm import LLMError, MockLLMClient  # noqa: E402
 from src.policy import (AccountState, Payee, PaymentProposal,  # noqa: E402
@@ -51,6 +53,44 @@ class TestProposer(unittest.TestCase):
         client = MockLLMClient(responder=lambda role, msgs: "no json here")
         with self.assertRaises(ProposalError):
             draft_proposal(client, "pay someone something")
+
+    def test_proposer_unexpected_failure_is_a_proposal_error(self):
+        def boom(role, msgs):
+            raise RuntimeError("model exploded")
+
+        with self.assertRaises(ProposalError):
+            draft_proposal(MockLLMClient(responder=boom),
+                           "pay $10 to v@x.example")
+
+
+class TestProposalFromMapping(unittest.TestCase):
+    def test_amount_minor_int_and_digit_string_accepted(self):
+        p = proposal_from_mapping({"payee": "v@x.example",
+                                   "amount_minor": 120_00})
+        self.assertEqual(p.amount_minor, 120_00)
+        p = proposal_from_mapping({"payee": "v@x.example",
+                                   "amount_minor": "12000"})
+        self.assertEqual(p.amount_minor, 120_00)
+
+    def test_amount_minor_garbage_is_a_proposal_error(self):
+        # int("abc") used to escape as a raw ValueError, crashing the
+        # caller instead of mapping to a 422.
+        with self.assertRaises(ProposalError):
+            proposal_from_mapping({"payee": "v@x.example",
+                                   "amount_minor": "abc"})
+
+    def test_amount_minor_float_is_rejected_not_truncated(self):
+        # int(120.5) silently truncated to 120 minor units ($1.20);
+        # a float is not an exact minor-unit amount.
+        with self.assertRaises(ProposalError):
+            proposal_from_mapping({"payee": "v@x.example",
+                                   "amount_minor": 120.5})
+
+    def test_amount_minor_bool_is_rejected(self):
+        # int(True) == 1: a JSON `true` used to become a $0.01 payment.
+        with self.assertRaises(ProposalError):
+            proposal_from_mapping({"payee": "v@x.example",
+                                   "amount_minor": True})
 
 
 class TestCheckerGovernance(unittest.TestCase):
@@ -101,6 +141,29 @@ class TestCheckerGovernance(unittest.TestCase):
         outcome = check(proposal(), MockLLMClient(responder=failing))
         self.assertEqual(outcome.final_verdict, "REJECT")
         self.assertTrue(any("failing closed" in r for r in outcome.reasons))
+
+    def test_checker_unexpected_failure_fails_closed(self):
+        # A responder raising anything else (a backend bug, a hostile
+        # mock) used to crash the flow with no audit record at all.
+        def boom(role, msgs):
+            raise RuntimeError("model exploded")
+
+        outcome = check(proposal(), MockLLMClient(responder=boom))
+        self.assertEqual(outcome.final_verdict, "REJECT")
+        self.assertTrue(any("failing closed" in r for r in outcome.reasons))
+
+    def test_checker_reasons_as_string_stay_whole(self):
+        # A bare-string "reasons" used to iterate into single
+        # characters in the audit trail.
+        verdict, reasons = _parse_checker_verdict(json.dumps(
+            {"verdict": "REJECT", "reasons": "scam pattern"}))
+        self.assertEqual(verdict, "REJECT")
+        self.assertEqual(reasons, ["scam pattern"])
+
+    def test_checker_null_output_fails_closed(self):
+        verdict, reasons = _parse_checker_verdict(None)
+        self.assertEqual(verdict, "REJECT")
+        self.assertTrue(any("unparseable" in r for r in reasons))
 
     def test_no_client_falls_back_to_deterministic(self):
         outcome = check(proposal(), None)

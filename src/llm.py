@@ -65,10 +65,55 @@ class LLMClient:
 # ----------------------------------------------------------------------
 # Mock backend (deterministic, offline)
 # ----------------------------------------------------------------------
-_AMOUNT_RE = re.compile(r"(?:USD|EUR|GBP|\$|€|£)?\s*(\d{1,9}(?:[.,]\d{2})?)\b")
+# Amount tokens: digits with optional thousands commas and an
+# optional decimal part ("120.00", "1,200.00", "120,50"). The number
+# is matched as one token so a thousands separator can never split
+# "$1,200.00" into "$1.00".
+_AMOUNT_TOKEN_RE = re.compile(r"\d[\d,]*(?:\.\d{2})?|\d+,\d{2}")
+_CURRENCY_PREFIX_RE = re.compile(
+    r"(?:USD|EUR|GBP|\$|€|£)\s*(" + _AMOUNT_TOKEN_RE.pattern + r")")
+_DECIMAL_AMOUNT_RE = re.compile(
+    r"\b(\d[\d,]*(?:\.\d{2})|\d+,\d{2})\b")
+_BARE_AMOUNT_RE = re.compile(r"\b(\d[\d,]*)\b")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _CURRENCY_HINTS = (("EUR", ("eur", "€")), ("GBP", ("gbp", "£")),
                    ("USD", ("usd", "$")))
+
+
+def _normalize_amount_token(token: str) -> str:
+    """One matched amount token -> the decimal string the proposer
+    prompt asks for.
+
+    "1,200.00" -> "1200.00" (thousands commas dropped),
+    "120,50"   -> "120.50"  (decimal comma),
+    "1,200"    -> "1200"    (thousands comma, no decimals).
+    """
+    if "," in token and "." in token:
+        return token.replace(",", "")
+    if "," in token:
+        head, _, tail = token.rpartition(",")
+        if len(tail) == 2 and "," not in head:
+            return f"{head}.{tail}"
+        return token.replace(",", "")
+    return token
+
+
+def _extract_amount(text: str) -> str:
+    """Pick the payment amount out of the request text.
+
+    Preference order matters: a bare "first number wins" scan reads
+    the invoice number ("INV-1042" -> $1,042) or a count ("2
+    invoices" -> $2.00) as the amount. So: an amount carrying a
+    currency marker wins, then an amount with decimals, then the
+    first bare number. The caller strips the invoice reference before
+    calling, so it can never be mistaken for money either.
+    """
+    for pattern in (_CURRENCY_PREFIX_RE, _DECIMAL_AMOUNT_RE,
+                    _BARE_AMOUNT_RE):
+        m = pattern.search(text)
+        if m:
+            return _normalize_amount_token(m.group(1))
+    return ""
 
 
 def _mock_extract_proposal(user_text: str) -> str:
@@ -86,17 +131,19 @@ def _mock_extract_proposal(user_text: str) -> str:
                       user_text, re.IGNORECASE)
         if m:
             payee = m.group(1).strip()
-    amount = ""
-    m = _AMOUNT_RE.search(user_text)
-    if m:
-        amount = m.group(1).replace(",", ".")
+    ref = re.search(r"\bINV-[\w-]+\b", user_text, re.IGNORECASE)
+    # Strip the invoice reference before hunting for the amount: its
+    # digits are an identifier, not money ("INV-1042" is not $1,042).
+    amount_text = user_text
+    if ref:
+        amount_text = user_text[:ref.start()] + " " + user_text[ref.end():]
+    amount = _extract_amount(amount_text)
     currency = "USD"
     lowered = user_text.lower()
     for code, hints in _CURRENCY_HINTS:
         if any(h in lowered for h in hints):
             currency = code
             break
-    ref = re.search(r"\bINV-[\w-]+\b", user_text, re.IGNORECASE)
     return json.dumps({
         "payee": payee,
         "amount": amount,
@@ -145,6 +192,14 @@ class MockLLMClient(LLMClient):
 # ----------------------------------------------------------------------
 # OpenAI-compatible HTTP backend
 # ----------------------------------------------------------------------
+def _usage_int(value) -> int:
+    """Best-effort usage counter: null/garbage counts as 0, never a crash."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 class OpenAICompatibleClient(LLMClient):
     """Chat-completions client for any OpenAI-compatible endpoint.
 
@@ -185,7 +240,7 @@ class OpenAICompatibleClient(LLMClient):
         )
         try:
             with self._opener(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", "replace") if exc.fp else ""
             raise LLMError(f"LLM provider HTTP {exc.code}: {raw[:300]}",
@@ -193,17 +248,35 @@ class OpenAICompatibleClient(LLMClient):
         except (urllib.error.URLError, TimeoutError, ConnectionError,
                 http.client.HTTPException, OSError) as exc:
             raise LLMError(f"LLM provider unreachable: {exc}") from exc
-        choices = data.get("choices") or []
-        if not choices:
-            raise LLMError(f"LLM provider returned no choices: {str(data)[:300]}")
-        usage = data.get("usage") or {}
+        try:
+            data = json.loads(raw)
+            choices = data.get("choices") or []
+            if not choices:
+                raise LLMError(
+                    f"LLM provider returned no choices: {str(data)[:300]}")
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            if not isinstance(content, str):
+                content = str(content)
+            usage = data.get("usage") or {}
+        except LLMError:
+            raise
+        except (ValueError, AttributeError, TypeError, KeyError) as exc:
+            # A 200 with garbage JSON, a null message, or a misshapen
+            # payload is a provider failure like any other: surface
+            # it as LLMError so the checker's fail-closed path can
+            # engage, instead of crashing the flow with a raw
+            # JSONDecodeError / AttributeError / TypeError.
+            raise LLMError(f"LLM provider returned an unreadable "
+                           f"response: {exc}") from exc
         return LLMResponse(
-            content=choices[0].get("message", {}).get("content", ""),
+            content=content,
             model=data.get("model", self.model),
             usage={
-                "prompt_tokens": int(usage.get("prompt_tokens", 0)),
-                "completion_tokens": int(usage.get("completion_tokens", 0)),
-                "total_tokens": int(usage.get("total_tokens", 0)),
+                "prompt_tokens": _usage_int(usage.get("prompt_tokens")),
+                "completion_tokens": _usage_int(
+                    usage.get("completion_tokens")),
+                "total_tokens": _usage_int(usage.get("total_tokens")),
             },
         )
 

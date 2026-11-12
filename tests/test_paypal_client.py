@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.paypal_client import (PayPalClient, PayPalConfig,  # noqa: E402
+from src.paypal_client import (LIVE_BASE, PayPalClient, PayPalConfig,  # noqa: E402
                                PayPalError, SimulatedPayPalClient)
 
 
@@ -48,6 +48,17 @@ def make_client(transport) -> PayPalClient:
 
 
 class TestRealClient(unittest.TestCase):
+    def test_mode_follows_the_configured_endpoint(self):
+        # A client pointed at the live API used to report mode
+        # "sandbox", so the web badges and ledger records mislabeled
+        # live money as sandbox money.
+        live = PayPalClient(PayPalConfig(client_id="cid",
+                                         client_secret="csecret",
+                                         base_url=LIVE_BASE))
+        self.assertEqual(live.mode, "live")
+        sandbox = make_client(FakeTransport())
+        self.assertEqual(sandbox.mode, "sandbox")
+
     def test_oauth_token_cached(self):
         t = FakeTransport()
         client = make_client(t)

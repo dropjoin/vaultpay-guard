@@ -177,6 +177,26 @@ class TestTwoPhaseFlow(unittest.TestCase):
             flow.capture_order("NOPE-404")
         self.assertEqual(ctx.exception.code, "not_found")
 
+    def test_capture_while_frozen_is_refused(self):
+        # The owner kill-switch halts payments: capturing while
+        # frozen used to move money anyway. The order stays
+        # ORDER_CREATED, PayPal is never called, and capture works
+        # again once the freeze lifts.
+        transport = FakeLiveTransport()
+        flow = make_live_flow(transport)
+        propose(flow)
+        flow.policy.frozen = True
+        with self.assertRaises(CaptureError) as ctx:
+            flow.capture_order("ORDER-1")
+        self.assertEqual(ctx.exception.code, "conflict")
+        self.assertIn("FROZEN", str(ctx.exception))
+        self.assertEqual(transport.capture_calls, 0)
+        self.assertEqual(len(flow.ledger.entries()), 1)
+        flow.policy.frozen = False
+        transport.approved = True
+        done = flow.capture_order("ORDER-1")
+        self.assertEqual(done["execution"]["status"], "COMPLETED")
+
     def test_capture_of_one_phase_order_is_a_conflict(self):
         # Simulated orders complete inside propose; there is no
         # phase 2 to run for them.

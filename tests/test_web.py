@@ -251,6 +251,75 @@ class TestBadgeLogic(unittest.TestCase):
         self.assertIn("LIVE API", text)
 
 
+class TestBrokenPolicyReturns500Json(WebServerCase):
+    """An unreadable policy file must yield a JSON 500, not a dropped
+    connection: do_POST used to have no catch-all, unlike do_GET."""
+
+    def setUp(self):
+        super().setUp()
+        self.app.policy_path.unlink()
+
+    def test_payments_post_is_500_json(self):
+        status, data = self.post_payment(
+            {"payee": "billing@northwind.example", "amount": "10.00"})
+        self.assertEqual(status, 500)
+        self.assertIn("error", data)
+
+    def test_capture_post_is_500_json(self):
+        req = urllib.request.Request(
+            self.base + "/api/capture",
+            data=json.dumps({"order_id": "ORDER-1"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                status, data = resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            status, data = exc.code, json.loads(exc.read().decode("utf-8"))
+        self.assertEqual(status, 500)
+        self.assertIn("error", data)
+
+
+class TestPolicyRereadAndFallback(WebServerCase):
+    def test_policy_file_is_reread_without_restart(self):
+        # The /policy page used to claim a restart is needed; the file
+        # is in fact re-read on every request.
+        status, body = self.get("/api/policy")
+        self.assertEqual(json.loads(body)["per_tx_cap"], "USD 250.00")
+        changed = dict(POLICY_JSON, per_tx_cap="100.00")
+        self.app.policy_path.write_text(json.dumps(changed),
+                                        encoding="utf-8")
+        status, body = self.get("/api/policy")
+        self.assertEqual(json.loads(body)["per_tx_cap"], "USD 100.00")
+        status, body = self.get("/policy")
+        self.assertNotIn("restart the server", body)
+
+    def test_ledger_page_has_a_real_cdn_fallback(self):
+        # The fallback table used to live inside <noscript> only, so a
+        # failed AG Grid CDN left a blank grid for JS users. The page
+        # now carries a server-rendered fallback div plus the JS that
+        # reveals it when the grid cannot initialize.
+        self.app.submit_payment({"payee": "billing@northwind.example",
+                                 "amount": "120.00",
+                                 "memo": "hosting invoice INV-1042"})
+        status, body = self.get("/ledger")
+        self.assertEqual(status, 200)
+        self.assertIn('id="ledger-fallback"', body)
+        self.assertIn("billing@northwind.example", body)
+        self.assertIn("showFallback", body)
+        self.assertIn("ledger-fallback", body)
+
+    def test_home_page_sample_trace_states_no_fictional_checks(self):
+        # The illustrative sample trace used to name a "jurisdiction
+        # US" check that exists nowhere in the code, and a fabricated
+        # request id; both are gone, and the hero states the real
+        # governance (the floor, not a final say).
+        status, body = self.get("/")
+        self.assertEqual(status, 200)
+        self.assertNotIn("jurisdiction", body)
+        self.assertNotIn("vp_8f2a9b3", body)
+        self.assertIn("sets the floor", body)
+
+
 class TestRecordToRow(unittest.TestCase):
     def test_rejected_record_has_no_execution_fields(self):
         row = record_to_row({

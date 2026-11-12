@@ -119,7 +119,13 @@ def _urllib_transport(method: str, url: str, headers: dict,
 class PayPalClient:
     """Real Orders v2 client (sandbox by default)."""
 
-    mode = "sandbox"
+    @property
+    def mode(self) -> str:
+        # The mode follows the endpoint actually configured: a client
+        # pointed at the live API must never report itself as
+        # "sandbox" — the web badges, the ledger records and the grid
+        # mode tags all key off this value.
+        return "live" if self.config.base_url == LIVE_BASE else "sandbox"
 
     def __init__(self, config: PayPalConfig, transport=None):
         self.config = config

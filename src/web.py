@@ -3,9 +3,10 @@
 Three pages plus a JSON API, served by the standard library's
 ``http.server`` (the project keeps its zero-dependency rule):
 
-    GET  /               New Payment — NL prompt box or structured
-                         form; runs the full flow and renders the
-                         decision card.
+    GET  /               New Payment — the request form (natural
+                         language or structured fields); submitting
+                         calls POST /api/payments and renders the
+                         decision card inline.
     GET  /ledger         Audit ledger in an AG Grid table (sorting,
                          filtering, pagination, custom renderers).
     GET  /policy         The active policy: caps, allowlist, today's
@@ -1201,8 +1202,8 @@ def _hero_html() -> str:
         "and <span class=\"grad-text\">your money</span>.</h2>"
         '<p class="hero-sub">Automated policy checks verify every '
         "payment before it reaches PayPal — an AI drafts the request, "
-        "a second AI reviews it, and deterministic code has the final "
-        "say.</p></section>"
+        "a second AI reviews it, and deterministic code sets the floor "
+        "neither model can loosen.</p></section>"
         '<section class="panel diagram" aria-label="How the guard '
         'works">'
         '<button type="button" id="anim-toggle" class="anim-toggle" '
@@ -1223,14 +1224,14 @@ def _hero_html() -> str:
         '<aside class="sample-trace">'
         f'<span class="pill-solid-pass t-item">{_SVG_CHECK} PASS</span>'
         '<h3 class="t-item">Decision trace</h3><ul>'
-        '<li class="t-item">Initialized: request ingested, ID '
-        "vp_8f2a9b3</li>"
+        '<li class="t-item">Proposal drafted: $120.00 to '
+        "billing@northwind.example</li>"
         '<li class="t-item">Passed payload scan: no injection '
         "patterns detected</li>"
         '<li class="t-item">Policy matched: amount $120.00 &le; '
         "per-transaction cap $250.00</li>"
         '<li class="t-item">Independent check: payee allowlisted, '
-        "jurisdiction US</li>"
+        "purpose consistent with the request</li>"
         "</ul></aside>"
         "</div></section>")
 def _daily_bar(view: dict) -> tuple[float, str]:
@@ -1536,7 +1537,11 @@ if (strip && 'IntersectionObserver' in window && !reduceMotion.matches) {
 _LEDGER_HEAD = ('<link rel="preconnect" href="https://cdn.jsdelivr.net">'
                 f'<link rel="stylesheet" href="{AG_GRID_CSS}">'
                 f'<link rel="stylesheet" href="{AG_GRID_THEME_CSS}">'
-                f'<script src="{AG_GRID_JS}"></script>')
+                f'<script src="{AG_GRID_JS}"></script>'
+                # Without JavaScript the grid can never initialize, so
+                # the server-rendered fallback table shows instead.
+                '<noscript><style>#ledger-fallback{display:block '
+                '!important}</style></noscript>')
 
 _LEDGER_JS = """
 <script>
@@ -1556,6 +1561,9 @@ class ModeRenderer {
     if (params.value) {
       this.eGui.className = 'tag-sim';
       this.eGui.textContent = 'SIMULATED';
+    } else if (params.data && params.data.mode === 'live') {
+      this.eGui.className = 'tag-live';
+      this.eGui.textContent = 'LIVE API';
     } else if (params.data && params.data.order_id) {
       this.eGui.className = 'tag-live';
       this.eGui.textContent = 'SANDBOX API';
@@ -1689,6 +1697,15 @@ const gridOptions = {
     'here.</span>'
 };
 let gridApi = null;
+function showFallback() {
+  // The AG Grid CDN (or the ledger API) failed: show the
+  // server-rendered table instead of leaving an empty grid. The
+  // audit trail must never sit behind a script tag.
+  const grid = document.getElementById('ledger-grid');
+  if (grid) grid.classList.add('hidden');
+  const fb = document.getElementById('ledger-fallback');
+  if (fb) fb.classList.remove('hidden');
+}
 function setRows(rows) {
   // With zero rows the AG Grid pagination strip reads awkwardly
   // ("0 to 0 of 0. Page 0 of 0") — switch pagination off and let
@@ -1702,12 +1719,18 @@ function setRows(rows) {
                                 Object.assign({}, gridOptions,
                                               {rowData: rows,
                                                pagination: paginate}));
+  } else {
+    showFallback();
   }
 }
 async function loadLedger() {
-  const resp = await fetch('/api/ledger');
-  const data = await resp.json();
-  setRows(data.rows || []);
+  try {
+    const resp = await fetch('/api/ledger');
+    const data = await resp.json();
+    setRows(data.rows || []);
+  } catch (err) {
+    showFallback();
+  }
 }
 document.getElementById('btn-refresh').addEventListener('click', loadLedger);
 loadLedger();
@@ -1738,13 +1761,17 @@ def _ledger_body(app: VaultPayWebApp) -> str:
         "Refresh</button></p>"
         '<p id="ledger-msg" class="muted" role="status"></p>'
         '<div id="ledger-grid" class="ag-theme-quartz"></div>'
-        "<noscript><table class=\"plain\"><tr>"
+        '<div id="ledger-fallback" class="hidden">'
+        '<p class="muted">Server-rendered ledger snapshot — shown '
+        "when the AG Grid table cannot load, so the audit trail is "
+        "never hidden behind a script tag.</p>"
+        "<table class=\"plain\"><tr>"
         "<th scope=\"col\">Time</th><th scope=\"col\">Payee</th>"
         "<th scope=\"col\">Amount</th><th scope=\"col\">Decision</th>"
         "<th scope=\"col\">Stage</th><th scope=\"col\">Execution</th>"
         "<th scope=\"col\">Reason</th><th scope=\"col\">Mode</th></tr>"
         + "".join(fallback_rows)
-        + "</table></noscript></section>" + _LEDGER_JS)
+        + "</table></div></section>" + _LEDGER_JS)
 
 
 def _policy_body(app: VaultPayWebApp) -> str:
@@ -1758,9 +1785,9 @@ def _policy_body(app: VaultPayWebApp) -> str:
     return (
         '<section class="panel"><h2>Active policy</h2>'
         f'<p class="muted">Read live from <code>{_esc(view["policy_file"])}'
-        "</code>. Edit that JSON and restart the server to change the "
-        "guardrails — by design there is no way for the agent (or this "
-        "UI) to loosen them at runtime.</p>"
+        "</code> on every request — edit that JSON to change the "
+        "guardrails, no restart needed. By design there is no way "
+        "for the agent (or this UI) to loosen them at runtime.</p>"
         '<table class="plain">'
         f"<tr><th scope=\"row\">Account frozen</th><td>{frozen}</td></tr>"
         f"<tr><th scope=\"row\">Per-transaction cap</th><td>{_esc(view['per_tx_cap'])}</td></tr>"
@@ -1883,6 +1910,13 @@ def make_handler(app: VaultPayWebApp):
             except ProposalError as exc:
                 self._send_json(422, {"error": str(exc)})
                 return
+            except Exception as exc:
+                # Same clean-500 contract as do_GET: an unexpected
+                # failure (unreadable policy file, ledger fault, ...)
+                # must come back as a JSON error, never a dropped
+                # connection with no response at all.
+                self._send_json(500, {"error": f"Internal error: {exc}"})
+                return
             self._send_json(200, {
                 "record": record,
                 "row": record_to_row(record),
@@ -1904,6 +1938,9 @@ def make_handler(app: VaultPayWebApp):
             except CaptureError as exc:
                 self._send_json(404 if exc.code == "not_found" else 409,
                                 {"error": str(exc)})
+                return
+            except Exception as exc:
+                self._send_json(500, {"error": f"Internal error: {exc}"})
                 return
             record = result["record"]
             self._send_json(200, {

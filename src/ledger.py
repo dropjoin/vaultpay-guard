@@ -52,8 +52,17 @@ class AuditLedger:
         out = []
         for line in self.path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 out.append(json.loads(line))
+            except ValueError:
+                # A torn write (crash mid-append) or a concurrent read
+                # catching a half-written last line must never brick
+                # the whole guard: skip the unparseable line and keep
+                # the valid records. The raw file is untouched, so
+                # the bytes stay available for forensics.
+                continue
         return out
 
     def spent_today_minor(self, currency: str, day: str | None = None) -> int:
@@ -81,7 +90,13 @@ class AuditLedger:
             prop = e.get("proposal") or {}
             if ex.get("status") in ("COMPLETED", "ORDER_CREATED") and \
                     str(prop.get("currency", "")).upper() == currency.upper():
-                total += int(prop.get("amount_minor", 0))
+                try:
+                    total += int(prop.get("amount_minor", 0))
+                except (TypeError, ValueError):
+                    # A record with a non-integer amount is not valid
+                    # accounting input; skip it rather than crashing
+                    # the daily-cap check for every later payment.
+                    continue
         return total
 
     def summary(self) -> dict:

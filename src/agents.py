@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 
 from .guardrail import GuardrailResult
-from .llm import LLMClient, LLMError
+from .llm import LLMClient
 from .money import parse_amount
 from .policy import (AccountState, PaymentProposal, PolicyConfig,
                      PolicyVerdict)
@@ -41,6 +41,11 @@ class ProposalError(Exception):
 
 
 def _clean_json(text: str) -> dict:
+    if not isinstance(text, str):
+        # A model backend returning null/non-string content must fail
+        # closed through the same ValueError path as unparseable text,
+        # not crash the flow with a TypeError.
+        raise ValueError("model output is not text")
     cleaned = re.sub(r"```(json)?", "", text).strip()
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start < 0 or end <= start:
@@ -74,7 +79,19 @@ def proposal_from_mapping(data: dict) -> PaymentProposal:
     """
     currency = str(data.get("currency", "USD")).upper()
     if data.get("amount_minor") is not None:
-        amount_minor = int(data["amount_minor"])
+        raw_minor = data["amount_minor"]
+        # Minor units are exact integers. A float would be silently
+        # truncated by int() (120.5 -> 120, i.e. $1.20 instead of an
+        # error) and a bool is not an amount at all (True -> 1).
+        if isinstance(raw_minor, bool) or \
+                not isinstance(raw_minor, (int, str)):
+            raise ProposalError("amount_minor must be an integer.")
+        try:
+            amount_minor = int(raw_minor) if isinstance(raw_minor, int) \
+                else int(str(raw_minor).strip())
+        except ValueError as exc:
+            raise ProposalError(
+                f"Unparseable amount_minor: {raw_minor!r}") from exc
     elif data.get("amount") is not None:
         try:
             amount_minor = parse_amount(str(data["amount"]), currency)
@@ -108,7 +125,10 @@ def draft_proposal(client: LLMClient, request_text: str) -> PaymentProposal:
     ]
     try:
         resp = client.chat("proposer", messages)
-    except LLMError as exc:
+    except Exception as exc:
+        # Any proposer failure — transport error, backend bug, hostile
+        # responder — is an intake failure, never a payment and never
+        # an unhandled crash.
         raise ProposalError(f"Proposer model failed: {exc}") from exc
     try:
         data = _clean_json(resp.content)
@@ -137,7 +157,16 @@ def _parse_checker_verdict(text: str) -> tuple[str, list[str]]:
     try:
         data = _clean_json(text)
         verdict = str(data.get("verdict", "")).upper()
-        reasons = [str(r) for r in data.get("reasons", [])]
+        raw_reasons = data.get("reasons", [])
+        # "reasons" must be a list of strings; a bare string would
+        # otherwise iterate character by character into the audit
+        # trail ("scam" -> ['s', 'c', 'a', 'm']).
+        if isinstance(raw_reasons, str):
+            reasons = [raw_reasons]
+        elif isinstance(raw_reasons, (list, tuple)):
+            reasons = [str(r) for r in raw_reasons]
+        else:
+            reasons = [str(raw_reasons)]
         if verdict in ("PASS", "REJECT"):
             return verdict, reasons
     except (ValueError, json.JSONDecodeError):
@@ -220,8 +249,10 @@ def run_checker(client: LLMClient | None, proposal: PaymentProposal,
     ]
     try:
         result = client.chat("checker", messages)
-    except LLMError as exc:
-        # A checker that cannot be reached cannot approve: fail closed.
+    except Exception as exc:
+        # A checker that cannot be reached — or that raises anything
+        # at all — cannot approve: fail closed with the reason
+        # recorded, instead of crashing the flow with no audit record.
         return CheckerOutcome(
             final_verdict="REJECT",
             reasons=[f"Checker model call failed ({exc}); failing "

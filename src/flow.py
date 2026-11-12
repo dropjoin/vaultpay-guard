@@ -32,7 +32,7 @@ from .guardrail import merge, scan_untrusted_text
 from .ledger import AuditLedger
 from .llm import LLMClient
 from .money import format_money
-from .paypal_client import PayPalError, approval_url
+from .paypal_client import approval_url
 from .policy import AccountState, PaymentProposal, PolicyConfig, evaluate
 
 
@@ -133,15 +133,27 @@ class PaymentFlow:
         """
         payee = self.policy.find_payee(proposal.payee)
         mode = getattr(self.paypal, "mode", "unknown")
+        if payee is None or not payee.email:
+            # The policy floor matched the payee by id/name, but there
+            # is no payment email to send to. Creating the order
+            # without a payee would silently make it payable to the
+            # API account itself — refuse to execute instead.
+            return {"status": "ERROR", "mode": mode,
+                    "error": "Allowlisted payee has no payment email "
+                             "configured; refusing to create an order "
+                             "without a recipient."}
         try:
             order = self.paypal.create_order(
                 amount_minor=proposal.amount_minor,
                 currency=proposal.currency,
-                payee_email=payee.email if payee else "",
+                payee_email=payee.email,
                 reference=proposal.reference,
                 description=(proposal.rationale or proposal.memo)[:127],
             )
-        except PayPalError as exc:
+        except Exception as exc:
+            # Any execution failure — API error, network, or an
+            # unexpected backend fault — is a recorded ERROR, never
+            # an unhandled crash that loses the decision entirely.
             return {"status": "ERROR", "mode": mode, "error": str(exc)}
         if mode != "simulated":
             return {
@@ -163,7 +175,7 @@ class PaymentFlow:
                 "capture_id": captures[0]["id"] if captures else None,
                 "amount": proposal.amount_str(),
             }
-        except PayPalError as exc:
+        except Exception as exc:
             return {"status": "ERROR", "mode": mode, "error": str(exc)}
 
     # -- phase 2 ----------------------------------------------------------
@@ -202,6 +214,15 @@ class PaymentFlow:
             raise CaptureError(
                 f"Order {order_id} is {status or 'not executed'}, "
                 "not awaiting capture.")
+        if self.policy.frozen:
+            # The owner kill-switch halts payments: a capture moves
+            # money, so it must not run while the account is frozen —
+            # even for an order approved before the freeze. The order
+            # stays ORDER_CREATED and capture can be retried after
+            # the freeze is lifted.
+            raise CaptureError(
+                "Account is FROZEN by the owner — capture is halted.",
+                code="conflict")
         prop = decision.get("proposal") or {}
         mode = getattr(self.paypal, "mode", "unknown")
         try:
@@ -215,7 +236,7 @@ class PaymentFlow:
                 "capture_id": captures[0]["id"] if captures else None,
                 "amount": prop.get("amount", ""),
             }
-        except PayPalError as exc:
+        except Exception as exc:
             execution = {"status": "ERROR", "mode": mode,
                          "order_id": order_id, "capture_id": None,
                          "amount": prop.get("amount", ""),

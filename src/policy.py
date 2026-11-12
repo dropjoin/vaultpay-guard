@@ -39,6 +39,10 @@ class Payee:
 
     def matches(self, candidate: str) -> bool:
         c = candidate.strip().lower()
+        if not c:
+            # An empty candidate must never match: a payee with an
+            # empty email would otherwise "match" an empty request.
+            return False
         return c in (self.id.lower(), self.email.lower(), self.name.lower())
 
 
@@ -153,7 +157,12 @@ def evaluate(policy: PolicyConfig, state: AccountState,
                 f"already spent today + {proposal.amount_str()} proposed > "
                 f"daily cap "
                 f"{format_money(policy.daily_cap_minor, policy.cap_currency)}.")
-    if proposal.amount_minor > state.balance_minor:
+    # The balance is denominated in the account currency; comparing a
+    # payment in another currency against it would compare minor units
+    # of two different currencies (and add a bogus "exceeds balance"
+    # reason to a payment already rejected on currency grounds).
+    if currency == state.currency.upper() and \
+            proposal.amount_minor > state.balance_minor:
         reasons.append(
             f"Amount exceeds the account balance "
             f"({format_money(state.balance_minor, state.currency)} available).")

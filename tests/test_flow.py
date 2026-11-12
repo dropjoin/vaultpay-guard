@@ -136,6 +136,50 @@ class TestFlow(unittest.TestCase):
                 self.assertIn(key, e)
         self.assertEqual(flow.ledger.summary()["executed"], 1)
 
+    def test_payee_without_email_never_executes(self):
+        # A payee matched by id but with no email used to get an order
+        # created with no payee at all (payable to the API account
+        # itself). Execution must refuse, and no order may be created.
+        no_email = Payee(id="vendor-x", name="Vendor X", email="")
+        paypal = SimulatedPayPalClient()
+        flow = make_flow(paypal=paypal, payees=(no_email,))
+        record = flow.run_structured({
+            "payee": "vendor-x", "amount": "50.00", "memo": "x"})
+        self.assertEqual(record["final_verdict"], "REJECT")
+        self.assertEqual(record["execution"]["status"], "ERROR")
+        self.assertIn("no payment email", record["execution"]["error"])
+        self.assertEqual(paypal._orders, {})
+
+    def test_unexpected_execution_failure_is_a_recorded_reject(self):
+        # A backend fault that is not a PayPalError used to crash the
+        # flow with no audit record at all.
+        class BoomPayPal:
+            mode = "sandbox"
+
+            def create_order(self, **kw):
+                raise RuntimeError("transport exploded")
+
+        flow = make_flow(paypal=BoomPayPal())
+        record = flow.run_structured({
+            "payee": "billing@northwind.example", "amount": "10.00",
+            "memo": "x"})
+        self.assertEqual(record["final_verdict"], "REJECT")
+        self.assertEqual(record["execution"]["status"], "ERROR")
+        self.assertIn("transport exploded", record["execution"]["error"])
+        self.assertEqual(len(flow.ledger.entries()), 1)
+
+    def test_unexpected_checker_failure_is_a_recorded_reject(self):
+        def boom(role, msgs):
+            raise RuntimeError("model exploded")
+
+        flow = make_flow(llm=MockLLMClient(responder=boom))
+        record = flow.run_structured({
+            "payee": "billing@northwind.example", "amount": "10.00",
+            "memo": "x"})
+        self.assertEqual(record["final_verdict"], "REJECT")
+        self.assertIsNone(record["execution"])
+        self.assertEqual(len(flow.ledger.entries()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
